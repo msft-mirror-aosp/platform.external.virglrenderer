@@ -6110,10 +6110,10 @@ static void vrend_renderer_blit_int(struct vrend_context *ctx,
 
    if (info->scissor_enable) {
       glScissor(info->scissor.minx, info->scissor.miny, info->scissor.maxx - info->scissor.minx, info->scissor.maxy - info->scissor.miny);
-      ctx->sub->scissor_state_dirty = (1 << 0);
       glEnable(GL_SCISSOR_TEST);
    } else
       glDisable(GL_SCISSOR_TEST);
+   ctx->sub->scissor_state_dirty = (1 << 0);
 
    glBindFramebuffer(GL_FRAMEBUFFER_EXT, ctx->sub->blit_fb_ids[0]);
    if (info->mask & PIPE_MASK_RGBA)

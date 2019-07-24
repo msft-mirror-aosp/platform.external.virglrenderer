@@ -2,12 +2,13 @@ dnl Process this file with autoconf to create configure.
 
 AC_PREREQ([2.60])
 
-AC_INIT([virglrenderer], [0.6.0],
+AC_INIT([virglrenderer], [0.7.0],
     [virglrenderer-devel@lists.freedesktop.org])
 AC_CONFIG_SRCDIR([Makefile.am])
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_AUX_DIR([build-aux])
 AC_CONFIG_MACRO_DIR([build-aux])
+PKG_PROG_PKG_CONFIG
 
 AM_INIT_AUTOMAKE([foreign dist-bzip2])
 
@@ -34,6 +35,10 @@ AX_CHECK_COMPILE_FLAG([-Werror=implicit-function-declaration], [CFLAGS="$CFLAGS 
 AX_CHECK_COMPILE_FLAG([-Werror=missing-prototypes],            [CFLAGS="$CFLAGS -Werror=missing-prototypes"])
 AX_CHECK_COMPILE_FLAG([-Wmissing-prototypes],                  [CFLAGS="$CFLAGS -Wmissing-prototypes"])
 AX_CHECK_COMPILE_FLAG([-Werror=int-to-pointer-cast],           [CFLAGS="$CFLAGS -Werror=int-to-pointer-cast"])
+
+AX_GCC_FUNC_ATTRIBUTE([visibility])
+AX_CHECK_COMPILE_FLAG([-fvisibility=hidden],                   [VISIBILITY_CFLAGS="-fvisibility=hidden"])
+
 
 AC_MSG_CHECKING([for native Win32])
 case "$host_os" in
@@ -83,6 +88,7 @@ AC_ARG_ENABLE(tests,
 	      [build_tests="auto"])
 
 AC_ARG_ENABLE([egl], AS_HELP_STRING([--disable-egl], [Disable EGL]))
+AC_ARG_ENABLE([glx], AS_HELP_STRING([--disable-glx], [Disable GLX]))
 
 PKG_CHECK_MODULES(CHECK, [check >= 0.9.4], [HAVE_CHECK="yes"], [HAVE_CHECK="no"])
 
@@ -117,7 +123,7 @@ if test "x$os_win32" = xno && test "x$enable_egl" != "xno"; then
 fi
 
 PKG_CHECK_MODULES([EPOXY], [epoxy])
-PKG_CHECK_VAR(epoxy_has_egl, [epoxy], [epoxy_has_egl])
+epoxy_has_egl=`$PKG_CONFIG --variable=epoxy_has_egl epoxy`
 AS_IF([test "x$epoxy_has_egl" = "x1" && test "x$enable_egl" != "xno"], [
   epoxy_has_egl=yes
   AC_DEFINE([HAVE_EPOXY_EGL_H], [1], [Libepoxy has EGL support.])
@@ -133,17 +139,26 @@ if test "x$os_win32" = xno; then
 	])
 fi
 
-
-AM_CONDITIONAL([HAVE_EPOXY_EGL], [test "x$epoxy_has_egl" = "xyes"])
-
-AC_ARG_WITH([glx], AS_HELP_STRING([--with-glx], [Build with the x11/glx backend]))
-AS_IF([test "x$with_glx" = "xyes"], [
+epoxy_has_glx=`$PKG_CONFIG --variable=epoxy_has_glx epoxy`
+AS_IF([test "x$epoxy_has_glx" = "x1" && test "x$enable_glx" != "xno"], [
   PKG_CHECK_MODULES([X11], [x11])
-  AC_CHECK_HEADER([epoxy/glx.h])
+  epoxy_has_glx=yes
+  AC_DEFINE([HAVE_EPOXY_GLX_H], [1], [Libepoxy has GLX support.])
+],[
+  epoxy_has_glx=no
 ])
-AM_CONDITIONAL([WITH_GLX], [test "x$with_glx" = "xyes"])
+AM_CONDITIONAL([HAVE_EPOXY_GLX], [test "x$epoxy_has_glx" = "xyes"])
 
 AC_SUBST([DEFINES])
+
+case "$host_os" in
+cygwin*)
+    VISIBILITY_CFLAGS=""
+    ;;
+esac
+
+AC_SUBST([VISIBILITY_CFLAGS])
+
 AC_CONFIG_FILES([
 		virglrenderer.pc
 		Makefile
@@ -164,7 +179,7 @@ AC_MSG_NOTICE([
       c compiler:               $CC
       win32:                    $os_win32
 
-      glx:                      $with_glx
+      glx:                      $epoxy_has_glx
       egl:                      $epoxy_has_egl
       debug:                    $enable_debug
       tests:                    $build_tests

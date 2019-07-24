@@ -150,7 +150,7 @@ static struct res_test testlist[] = {
   /* 1D texture with samples - FAIL */
   TEST(1, PIPE_TEXTURE_1D, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 4, EINVAL),
   /* 1D texture with miplevels - PASS */
-  TEST_MIP(1, PIPE_TEXTURE_1D, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 1, 4, 0),
+  TEST_MIP(1, PIPE_TEXTURE_1D, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 0, 4, 0),
 
   /* 1D array texture - PASS */
   TEST(1, PIPE_TEXTURE_1D_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 0, 0),
@@ -163,7 +163,7 @@ static struct res_test testlist[] = {
   /* 1D texture with samples - FAIL */
   TEST(1, PIPE_TEXTURE_1D_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 4, EINVAL),
   /* 1D array texture with miplevels - PASS */
-  TEST_MIP(1, PIPE_TEXTURE_1D_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 1, 4, 0),
+  TEST_MIP(1, PIPE_TEXTURE_1D_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 0, 4, 0),
 
   /* 2D texture - PASS */
   TEST(1, PIPE_TEXTURE_2D, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 0, 0),
@@ -177,7 +177,7 @@ static struct res_test testlist[] = {
   /* 2D texture with samples - PASS */
   TEST(1, PIPE_TEXTURE_2D, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 4, 0),
   /* 2D texture with miplevels - PASS */
-  TEST_MIP(1, PIPE_TEXTURE_2D, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 1, 4, 0),
+  TEST_MIP(1, PIPE_TEXTURE_2D, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 0, 4, 0),
   /* 2D texture with samples and miplevels - FAIL */
   TEST_MIP(1, PIPE_TEXTURE_2D, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 4, 4, EINVAL),
 
@@ -192,7 +192,7 @@ static struct res_test testlist[] = {
   /* RECT texture with samples - FAIL */
   TEST(1, PIPE_TEXTURE_RECT, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 4, EINVAL),
   /* RECT texture with miplevels - FAIL */
-  TEST_MIP(1, PIPE_TEXTURE_RECT, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 1, 4, EINVAL),
+  TEST_MIP(1, PIPE_TEXTURE_RECT, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 0, 4, EINVAL),
 
   /* 2D texture array - PASS */
   TEST(1, PIPE_TEXTURE_2D_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 0, 0),
@@ -205,7 +205,7 @@ static struct res_test testlist[] = {
   /* 2D texture with samples - PASS */
   TEST(1, PIPE_TEXTURE_2D_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 4, 0),
   /* 2D texture with miplevels - PASS */
-  TEST_MIP(1, PIPE_TEXTURE_2D_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 1, 4, 0),
+  TEST_MIP(1, PIPE_TEXTURE_2D_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 0, 4, 0),
   /* 2D texture with samplesmiplevels - FAIL */
   TEST_MIP(1, PIPE_TEXTURE_2D_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 4, 4, EINVAL),
 
@@ -220,7 +220,7 @@ static struct res_test testlist[] = {
   /* 3D texture with samples - FAIL */
   TEST(1, PIPE_TEXTURE_3D, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 4, EINVAL),
   /* 3D texture with miplevels - PASS */
-  TEST_MIP(1, PIPE_TEXTURE_3D, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 1, 4, 0),
+  TEST_MIP(1, PIPE_TEXTURE_3D, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 1, 0, 4, 0),
 
   /* CUBE texture with array size == 6 - PASS */
   TEST(1, PIPE_TEXTURE_CUBE, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 6, 0, 0),
@@ -233,25 +233,25 @@ static struct res_test testlist[] = {
   /* CUBE texture with samples - FAIL */
   TEST(1, PIPE_TEXTURE_CUBE, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 6, 4, EINVAL),
   /* CUBE texture with miplevels - PASS */
-  TEST_MIP(1, PIPE_TEXTURE_CUBE, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 6, 1, 4, 0),
+  TEST_MIP(1, PIPE_TEXTURE_CUBE, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 6, 0, 4, 0),
 };
 
 /* separate since these may fail on a GL that doesn't support cube map arrays */
 static struct res_test cubemaparray_testlist[] = {
   /* CUBE array with array size = 6 - PASS */
-  TEST(1, PIPE_TEXTURE_CUBE_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 6, 1, 0),
+  TEST(1, PIPE_TEXTURE_CUBE_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 6, 0, 0),
   /* CUBE array with array size = 12 - PASS */
-  TEST(1, PIPE_TEXTURE_CUBE_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 12, 1, 0),
+  TEST(1, PIPE_TEXTURE_CUBE_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 12, 0, 0),
   /* CUBE array with array size = 10 - FAIL */
-  TEST(1, PIPE_TEXTURE_CUBE_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 10, 1, EINVAL),
+  TEST(1, PIPE_TEXTURE_CUBE_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 1, 1, 10, 0, EINVAL),
   /* CUBE array with array size = 12 and height - PASS */
-  TEST(1, PIPE_TEXTURE_CUBE_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 50, 1, 12, 1, 0),
+  TEST(1, PIPE_TEXTURE_CUBE_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 50, 1, 12, 0, 0),
   /* CUBE array with array size = 12 and depth - FAIL */
-  TEST(1, PIPE_TEXTURE_CUBE_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 50, 5, 12, 1, EINVAL),
+  TEST(1, PIPE_TEXTURE_CUBE_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 50, 5, 12, 0, EINVAL),
   /* CUBE array with array size = 12 and samples - FAIL */
   TEST(1, PIPE_TEXTURE_CUBE_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 50, 1, 12, 4, EINVAL),
   /* CUBE array with array size = 12 and miplevels - PASS */
-  TEST_MIP(1, PIPE_TEXTURE_CUBE_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 50, 1, 12, 1, 4, 0),
+  TEST_MIP(1, PIPE_TEXTURE_CUBE_ARRAY, PIPE_FORMAT_B8G8R8X8_UNORM, PIPE_BIND_SAMPLER_VIEW, 50, 50, 1, 12, 0, 4, 0),
 };
 
 START_TEST(virgl_res_tests)
@@ -287,6 +287,23 @@ START_TEST(cubemaparray_res_tests)
 }
 END_TEST
 
+START_TEST(private_ptr)
+{
+  int ret;
+  ret = testvirgl_init_single_ctx();
+  ck_assert_int_eq(ret, 0);
+  struct virgl_renderer_resource_create_args args = { 1, PIPE_BUFFER, PIPE_FORMAT_R8_UNORM, 0, 50, 1, 1, 1, 0, 0, 0 };
+  ret = virgl_renderer_resource_create(&args, NULL, 0);
+  ck_assert_int_eq(ret, 0);
+
+  void *init_priv = (void*)0xabab;
+  virgl_renderer_resource_set_priv(1, init_priv);
+  void *priv = virgl_renderer_resource_get_priv(1);
+  ck_assert_int_eq((unsigned long)priv, 0xabab);
+  testvirgl_fini_single_ctx();
+}
+END_TEST
+
 static Suite *virgl_init_suite(void)
 {
   Suite *s;
@@ -297,6 +314,7 @@ static Suite *virgl_init_suite(void)
 
   tcase_add_loop_test(tc_core, virgl_res_tests, 0, ARRAY_SIZE(testlist));
   tcase_add_loop_test(tc_core, cubemaparray_res_tests, 0, ARRAY_SIZE(cubemaparray_testlist));
+  tcase_add_test(tc_core, private_ptr);
   suite_add_tcase(s, tc_core);
   return s;
 
@@ -308,6 +326,9 @@ int main(void)
   Suite *s;
   SRunner *sr;
   int number_failed;
+
+  if (getenv("VRENDTEST_USE_EGL_SURFACELESS"))
+     context_flags |= VIRGL_RENDERER_USE_SURFACELESS;
 
   s = virgl_init_suite();
   sr = srunner_create(s);

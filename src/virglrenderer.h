@@ -29,6 +29,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdarg.h>
 
 struct virgl_box;
 struct iovec;
@@ -94,6 +95,8 @@ VIRGL_EXPORT int virgl_renderer_get_fd_for_texture2(uint32_t tex_id, int *fd, in
 #define VIRGL_RES_BIND_STREAM_OUTPUT (1 << 11)
 #define VIRGL_RES_BIND_CURSOR        (1 << 16)
 #define VIRGL_RES_BIND_CUSTOM        (1 << 17)
+#define VIRGL_RES_BIND_SCANOUT       (1 << 18)
+#define VIRGL_RES_BIND_SHARED        (1 << 20)
 
 struct virgl_renderer_resource_create_args {
    uint32_t handle;
@@ -110,10 +113,15 @@ struct virgl_renderer_resource_create_args {
 };
 
 /* new API */
+/* This typedef must be kept in sync with vrend_debug.h */
+typedef void (*virgl_debug_callback_type)(const char *fmt, va_list ap);
 
 VIRGL_EXPORT int virgl_renderer_resource_create(struct virgl_renderer_resource_create_args *args, struct iovec *iov, uint32_t num_iovs);
 VIRGL_EXPORT int virgl_renderer_resource_import_eglimage(struct virgl_renderer_resource_create_args *args, void *image);
 VIRGL_EXPORT void virgl_renderer_resource_unref(uint32_t res_handle);
+
+VIRGL_EXPORT void virgl_renderer_resource_set_priv(uint32_t res_handle, void *priv);
+VIRGL_EXPORT void *virgl_renderer_resource_get_priv(uint32_t res_handle);
 
 VIRGL_EXPORT int virgl_renderer_context_create(uint32_t handle, uint32_t nlen, const char *name);
 VIRGL_EXPORT void virgl_renderer_context_destroy(uint32_t handle);
@@ -155,6 +163,8 @@ VIRGL_EXPORT void virgl_renderer_force_ctx_0(void);
 
 VIRGL_EXPORT void virgl_renderer_ctx_attach_resource(int ctx_id, int res_handle);
 VIRGL_EXPORT void virgl_renderer_ctx_detach_resource(int ctx_id, int res_handle);
+
+VIRGL_EXPORT virgl_debug_callback_type virgl_set_debug_callback(virgl_debug_callback_type cb);
 
 /* return information about a resource */
 

@@ -1,5 +1,6 @@
 SUBDIRS := gallium/auxiliary
 AM_LDFLAGS = -lm \
+	$(LIBDRM_LIBS) \
 	$(GBM_LIBS) \
 	$(EPOXY_LIBS) \
 	$(X11_LIBS) \
@@ -27,10 +28,15 @@ libvrend_la_SOURCES = \
         vrend_shader.h \
         vrend_object.c \
         vrend_object.h \
+        vrend_debug.c \
+        vrend_debug.h \
         vrend_decode.c \
         vrend_formats.c \
         vrend_blitter.c \
         vrend_blitter.h \
+        vrend_strbuf.h \
+        vrend_tweaks.c \
+        vrend_tweaks.h \
         iov.c
 
 if HAVE_EPOXY_EGL
@@ -39,7 +45,7 @@ libvrend_la_SOURCES += \
         virgl_egl_context.c
 endif
 
-if WITH_GLX
+if HAVE_EPOXY_GLX
 libvrend_la_SOURCES += \
 	virgl_glx.h \
 	virgl_glx_context.c
@@ -48,7 +54,7 @@ endif
 lib_LTLIBRARIES = libvirglrenderer.la
 noinst_LTLIBRARIES = libvrend.la
 
-GM_LDFLAGS = -Wl,-Bsymbolic -version-number 0:2 -no-undefined
+GM_LDFLAGS = -Wl,-Bsymbolic -version-number 0:3 -no-undefined
 
 libvirglrenderer_la_SOURCES = virglrenderer.c
 libvirglrenderer_ladir = $(libdir)

@@ -31,204 +31,424 @@
 #include <netinet/in.h>
 #include <sys/un.h>
 #include <fcntl.h>
+#include <getopt.h>
+#include <string.h>
 
 #include "util.h"
+#include "util/u_memory.h"
 #include "vtest.h"
 #include "vtest_protocol.h"
+#include "virglrenderer.h"
 
-static int vtest_open_socket(const char *path)
+
+
+struct vtest_program
 {
-    struct sockaddr_un un;
-    int sock;
+   const char *socket_name;
+   int socket;
+   const char *read_file;
+   int in_fd;
+   int out_fd;
+   struct vtest_input input;
 
-    sock = socket(PF_UNIX, SOCK_STREAM, 0);
-    if (sock < 0) {
-	return -1;
-    }
+   bool do_fork;
+   bool loop;
 
-    memset(&un, 0, sizeof(un));
-    un.sun_family = AF_UNIX;
-    
-    snprintf(un.sun_path, sizeof(un.sun_path), "%s", path);
+   bool use_glx;
+   bool use_egl_surfaceless;
+   bool use_gles;
+};
 
-    unlink(un.sun_path);
+struct vtest_program prog = {
+   .socket_name = VTEST_DEFAULT_SOCKET_NAME,
+   .socket = -1,
 
-    if (bind(sock, (struct sockaddr *)&un, sizeof(un)) < 0) {
-	goto err;
-    }
-    
-    if (listen(sock, 1) < 0){
-	goto err;
-    }
+   .read_file = NULL,
 
-    return sock;
- err:
-    close(sock);
-    return -1;
-}
+   .in_fd = -1,
+   .out_fd = -1,
+   .input = { { -1 }, NULL },
+   .do_fork = true,
+   .loop = true,
+};
 
-static int wait_for_socket_accept(int sock)
-{
-    fd_set read_fds;
-    int new_fd;
-    int ret;
-    FD_ZERO(&read_fds);
-    FD_SET(sock, &read_fds);
+static void vtest_main_getenv(void);
+static void vtest_main_parse_args(int argc, char **argv);
+static void vtest_main_set_signal_child(void);
+static void vtest_main_set_signal_segv(void);
+static void vtest_main_open_read_file(void);
+static void vtest_main_open_socket(void);
+static void vtest_main_run_renderer(int in_fd, int out_fd,
+                                    struct vtest_input *input, int ctx_flags);
+static void vtest_main_wait_for_socket_accept(void);
+static void vtest_main_tidy_fds(void);
+static void vtest_main_close_socket(void);
 
-    ret = select(sock + 1, &read_fds, NULL, NULL, NULL);
-    if (ret < 0)
-	return ret;
-
-    if (FD_ISSET(sock, &read_fds)) {	
-	new_fd = accept(sock, NULL, NULL);
-	return new_fd;
-    }
-    return -1;
-}
-
-static int run_renderer(int in_fd, int out_fd)
-{
-    int ret;
-    uint32_t header[VTEST_HDR_SIZE];
-    bool inited = false;
-again:
-    ret = vtest_wait_for_fd_read(in_fd);
-    if (ret < 0)
-      goto fail;
-
-    ret = vtest_block_read(in_fd, &header, sizeof(header));
-
-    if (ret == 8) {
-      if (!inited) {
-	if (header[1] != VCMD_CREATE_RENDERER)
-	  goto fail;
-	ret = vtest_create_renderer(in_fd, out_fd, header[0]);
-	inited = true;
-      }
-      vtest_poll();
-      switch (header[1]) {
-      case VCMD_GET_CAPS:
-	ret = vtest_send_caps();
-	break;
-      case VCMD_RESOURCE_CREATE:
-	ret = vtest_create_resource();
-	break;
-      case VCMD_RESOURCE_UNREF:
-	ret = vtest_resource_unref();
-	break;
-      case VCMD_SUBMIT_CMD:
-	ret = vtest_submit_cmd(header[0]);
-	break;
-      case VCMD_TRANSFER_GET:
-	ret = vtest_transfer_get(header[0]);
-	break;
-      case VCMD_TRANSFER_PUT:
-	ret = vtest_transfer_put(header[0]);
-	break;
-      case VCMD_RESOURCE_BUSY_WAIT:
-        vtest_renderer_create_fence();
-	ret = vtest_resource_busy_wait();
-	break;
-      case VCMD_GET_CAPS2:
-	ret = vtest_send_caps2();
-	break;
-      default:
-	break;
-      }
-
-      if (ret < 0) {
-	goto fail;
-      }
-
-      goto again;
-    }
-    if (ret <= 0) {
-      goto fail;
-    }
-fail:
-    fprintf(stderr, "socket failed - closing renderer\n");
-    vtest_destroy_renderer();
-    close(in_fd);
-    return 0;
-}
 
 int main(int argc, char **argv)
 {
-    int ret, sock = -1, in_fd, out_fd;
-    pid_t pid;
-    bool do_fork = true, loop = true;
-    struct sigaction sa;
-
 #ifdef __AFL_LOOP
 while (__AFL_LOOP(1000)) {
 #endif
 
-   if (argc > 1) {
-      if (!strcmp(argv[1], "--no-loop-or-fork")) {
-        do_fork = false;
-        loop = false;
-      } else if (!strcmp(argv[1], "--no-fork")) {
-	do_fork = false;
-      } else {
-         ret = open(argv[1], O_RDONLY);
-         if (ret == -1) {
-            perror(0);
-            exit(1);
-         }
-         in_fd = ret;
-         ret = open("/dev/null", O_WRONLY);
-         if (ret == -1) {
-            perror(0);
-            exit(1);
-         }
-         out_fd = ret;
-         loop = false;
-         do_fork = false;
-         goto start;
-      }
-    }
+   vtest_main_getenv();
+   vtest_main_parse_args(argc, argv);
 
-    if (do_fork) {
-      sa.sa_handler = SIG_IGN;
-      sigemptyset(&sa.sa_mask);
-      sa.sa_flags = 0;
-      if (sigaction(SIGCHLD, &sa, 0) == -1) {
-	perror(0);
-	exit(1);
+   int ctx_flags = VIRGL_RENDERER_USE_EGL;
+   if (prog.use_glx) {
+      if (prog.use_egl_surfaceless || prog.use_gles) {
+         fprintf(stderr, "Cannot use surfaceless or GLES with GLX.\n");
+         exit(EXIT_FAILURE);
       }
-    }
+      ctx_flags = VIRGL_RENDERER_USE_GLX;
+   } else {
+      if (prog.use_egl_surfaceless)
+         ctx_flags |= VIRGL_RENDERER_USE_SURFACELESS;
+      if (prog.use_gles)
+         ctx_flags |= VIRGL_RENDERER_USE_GLES;
+   }
 
-    sock = vtest_open_socket("/tmp/.virgl_test");
+   if (prog.read_file != NULL) {
+      vtest_main_open_read_file();
+      goto start;
+   }
+
+   if (prog.do_fork) {
+      vtest_main_set_signal_child();
+   }
+
+   vtest_main_open_socket();
 restart:
-    in_fd = wait_for_socket_accept(sock);
-    out_fd = in_fd;
+   vtest_main_wait_for_socket_accept();
 
 start:
-    if (do_fork) {
+   if (prog.do_fork) {
       /* fork a renderer process */
-      switch ((pid = fork())) {
-      case 0:
-        run_renderer(in_fd, out_fd);
-	exit(0);
-	break;
-      case -1:
-      default:
-	close(in_fd);
-        if (loop)
-           goto restart;
+      if (fork() == 0) {
+         vtest_main_set_signal_segv();
+         vtest_main_run_renderer(prog.in_fd, prog.out_fd, &prog.input, ctx_flags);
+         exit(0);
       }
-    } else {
-      run_renderer(in_fd, out_fd);
-      if (loop)
-         goto restart;
-    }
+   } else {
+      vtest_main_set_signal_segv();
+       vtest_main_run_renderer(prog.in_fd, prog.out_fd, &prog.input, ctx_flags);
+   }
 
-    if (sock != -1)
-       close(sock);
-    if (in_fd != out_fd)
-       close(out_fd);
+   vtest_main_tidy_fds();
+
+   if (prog.loop) {
+      goto restart;
+   }
+
+   vtest_main_close_socket();
 
 #ifdef __AFL_LOOP
 }
 #endif
+}
+
+#define OPT_NO_FORK 'f'
+#define OPT_NO_LOOP_OR_FORK 'l'
+#define OPT_USE_GLX 'x'
+#define OPT_USE_EGL_SURFACELESS 's'
+#define OPT_USE_GLES 'e'
+
+static void vtest_main_parse_args(int argc, char **argv)
+{
+   int ret;
+
+   static struct option long_options[] = {
+      {"no-fork",             no_argument, NULL, OPT_NO_FORK},
+      {"no-loop-or-fork",     no_argument, NULL, OPT_NO_LOOP_OR_FORK},
+      {"use-glx",             no_argument, NULL, OPT_USE_GLX},
+      {"use-egl-surfaceless", no_argument, NULL, OPT_USE_EGL_SURFACELESS},
+      {"use-gles",            no_argument, NULL, OPT_USE_GLES},
+      {0, 0, 0, 0}
+   };
+
+   /* getopt_long stores the option index here. */
+   int option_index = 0;
+
+   do {
+      ret = getopt_long(argc, argv, "", long_options, &option_index);
+
+      switch (ret) {
+      case -1:
+         break;
+      case OPT_NO_FORK:
+         prog.do_fork = false;
+         break;
+      case OPT_NO_LOOP_OR_FORK:
+         prog.do_fork = false;
+         prog.loop = false;
+         break;
+      case OPT_USE_GLX:
+         prog.use_glx = true;
+         break;
+      case OPT_USE_EGL_SURFACELESS:
+         prog.use_egl_surfaceless = true;
+         break;
+      case OPT_USE_GLES:
+         prog.use_gles = true;
+         break;
+      default:
+         printf("Usage: %s [--no-fork] [--no-loop-or-fork] [--use-glx] "
+                "[--use-egl-surfaceless] [--use-gles] [file]\n", argv[0]);
+         exit(EXIT_FAILURE);
+         break;
+      }
+
+   } while (ret >= 0);
+
+   if (optind < argc) {
+      prog.read_file = argv[optind];
+      prog.loop = false;
+      prog.do_fork = false;
+   }
+}
+
+static void vtest_main_getenv(void)
+{
+   prog.use_glx = getenv("VTEST_USE_GLX") != NULL;
+   prog.use_egl_surfaceless = getenv("VTEST_USE_EGL_SURFACELESS") != NULL;
+   prog.use_gles = getenv("VTEST_USE_GLES") != NULL;
+}
+
+static void handler(int sig, siginfo_t *si, void *unused)
+{
+   (void)sig; (void)si, (void)unused;
+
+   printf("SIGSEGV!\n");
+   exit(EXIT_FAILURE);
+}
+
+static void vtest_main_set_signal_child(void)
+{
+   struct sigaction sa;
+   int ret;
+
+   memset(&sa, 0, sizeof(sa));
+   sigemptyset(&sa.sa_mask);
+   sa.sa_handler = SIG_IGN;
+   sa.sa_flags = 0;
+
+   ret = sigaction(SIGCHLD, &sa, NULL);
+   if (ret == -1) {
+      perror("Failed to set SIGCHLD");
+      exit(1);
+   }
+}
+
+static void vtest_main_set_signal_segv(void)
+{
+   struct sigaction sa;
+   int ret;
+
+   memset(&sa, 0, sizeof(sa));
+   sigemptyset(&sa.sa_mask);
+   sa.sa_flags = SA_SIGINFO;
+   sa.sa_sigaction = handler;
+
+   ret = sigaction(SIGSEGV, &sa, NULL);
+   if (ret == -1) {
+      perror("Failed to set SIGSEGV");
+      exit(1);
+   }
+}
+
+static void vtest_main_open_read_file(void)
+{
+   int ret;
+
+   ret = open(prog.read_file, O_RDONLY);
+   if (ret == -1) {
+      perror(NULL);
+      exit(1);
+   }
+   prog.in_fd = ret;
+   prog.input.data.fd = prog.in_fd;
+   prog.input.read = vtest_block_read;
+
+   ret = open("/dev/null", O_WRONLY);
+   if (ret == -1) {
+      perror(NULL);
+      exit(1);
+   }
+   prog.out_fd = ret;
+}
+
+static void vtest_main_open_socket(void)
+{
+   struct sockaddr_un un;
+
+   prog.socket = socket(PF_UNIX, SOCK_STREAM, 0);
+   if (prog.socket < 0) {
+      goto err;
+   }
+
+   memset(&un, 0, sizeof(un));
+   un.sun_family = AF_UNIX;
+
+   snprintf(un.sun_path, sizeof(un.sun_path), "%s", prog.socket_name);
+
+   unlink(un.sun_path);
+
+   if (bind(prog.socket, (struct sockaddr *)&un, sizeof(un)) < 0) {
+      goto err;
+   }
+
+   if (listen(prog.socket, 1) < 0){
+      goto err;
+   }
+
+   return;
+
+err:
+   perror("Failed to setup socket.");
+   exit(1);
+}
+
+static void vtest_main_wait_for_socket_accept(void)
+{
+   fd_set read_fds;
+   int new_fd;
+   int ret;
+   FD_ZERO(&read_fds);
+   FD_SET(prog.socket, &read_fds);
+
+   ret = select(prog.socket + 1, &read_fds, NULL, NULL, NULL);
+   if (ret < 0) {
+      perror("Failed to select on socket!");
+      exit(1);
+   }
+
+   if (!FD_ISSET(prog.socket, &read_fds)) {
+      perror("Odd state in fd_set.");
+      exit(1);
+   }
+
+   new_fd = accept(prog.socket, NULL, NULL);
+   if (new_fd < 0) {
+      perror("Failed to accept socket.");
+      exit(1);
+   }
+
+   prog.in_fd = new_fd;
+   prog.out_fd = new_fd;
+   prog.input.data.fd = prog.in_fd;
+   prog.input.read = vtest_block_read;
+}
+
+typedef int (*vtest_cmd_fptr_t)(uint32_t);
+
+static const vtest_cmd_fptr_t vtest_commands[] = {
+   NULL /* CMD ids starts at 1 */,
+   vtest_send_caps,
+   vtest_create_resource,
+   vtest_resource_unref,
+   vtest_transfer_get,
+   vtest_transfer_put,
+   vtest_submit_cmd,
+   vtest_resource_busy_wait,
+   NULL, /* vtest_create_renderer is a specific case */
+   vtest_send_caps2,
+   vtest_ping_protocol_version,
+   vtest_protocol_version,
+   vtest_create_resource2,
+   vtest_transfer_get2,
+   vtest_transfer_put2,
+};
+
+static void vtest_main_run_renderer(int in_fd, int out_fd,
+                                    struct vtest_input *input, int ctx_flags)
+{
+   int err, ret;
+   uint32_t header[VTEST_HDR_SIZE];
+   int initialized = 0;
+
+   do {
+      ret = vtest_wait_for_fd_read(in_fd);
+      if (ret < 0) {
+         err = 1;
+         break;
+      }
+
+      ret = input->read(input, &header, sizeof(header));
+      if (ret < 0 || (size_t)ret < sizeof(header)) {
+         err = 2;
+         break;
+      }
+
+      if (!initialized) {
+         /* The first command MUST be VCMD_CREATE_RENDERER */
+         if (header[1] != VCMD_CREATE_RENDERER) {
+            err = 3;
+            break;
+         }
+
+         ret = vtest_create_renderer(input, out_fd, header[0], ctx_flags);
+         if (ret < 0) {
+            err = 4;
+            break;
+         }
+         initialized = 1;
+         printf("%s: vtest initialized.\n", __func__);
+         vtest_poll();
+         continue;
+      }
+
+      vtest_poll();
+      if (header[1] <= 0 || header[1] >= ARRAY_SIZE(vtest_commands)) {
+         err = 5;
+         break;
+      }
+
+      if (vtest_commands[header[1]] == NULL) {
+         err = 6;
+         break;
+      }
+
+      ret = vtest_commands[header[1]](header[0]);
+      if (ret < 0) {
+         err = 7;
+         break;
+      }
+
+      /* GL draws are fenced, while possible fence creations are too */
+      if (header[1] == VCMD_SUBMIT_CMD || header[1] == VCMD_RESOURCE_CREATE ||
+          header[1] == VCMD_RESOURCE_CREATE2)
+         vtest_renderer_create_fence();
+
+   } while (1);
+
+   fprintf(stderr, "socket failed (%d) - closing renderer\n", err);
+
+   vtest_destroy_renderer();
+}
+
+static void vtest_main_tidy_fds(void)
+{
+   // out_fd will be closed by the in_fd clause if they are the same.
+   if (prog.out_fd == prog.in_fd) {
+      prog.out_fd = -1;
+   }
+
+   if (prog.in_fd != -1) {
+      close(prog.in_fd);
+      prog.in_fd = -1;
+      prog.input.read = NULL;
+   }
+
+   if (prog.out_fd != -1) {
+      close(prog.out_fd);
+      prog.out_fd = -1;
+   }
+}
+
+static void vtest_main_close_socket(void)
+{
+   if (prog.socket != -1) {
+      close(prog.socket);
+      prog.socket = -1;
+   }
 }

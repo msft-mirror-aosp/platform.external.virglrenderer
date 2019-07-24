@@ -72,6 +72,16 @@ int virgl_renderer_resource_import_eglimage(struct virgl_renderer_resource_creat
 #endif
 }
 
+void virgl_renderer_resource_set_priv(uint32_t res_handle, void *priv)
+{
+   vrend_renderer_resource_set_priv(res_handle, priv);
+}
+
+void *virgl_renderer_resource_get_priv(uint32_t res_handle)
+{
+   return vrend_renderer_resource_get_priv(res_handle);
+}
+
 void virgl_renderer_resource_unref(uint32_t res_handle)
 {
    vrend_renderer_resource_unref(res_handle);
@@ -121,8 +131,10 @@ int virgl_renderer_transfer_write_iov(uint32_t handle,
    transfer_info.offset = offset;
    transfer_info.iovec = iovec;
    transfer_info.iovec_cnt = iovec_cnt;
+   transfer_info.context0 = true;
+   transfer_info.synchronized = false;
 
-   return vrend_renderer_transfer_iov(&transfer_info, VREND_TRANSFER_WRITE);
+   return vrend_renderer_transfer_iov(&transfer_info, VIRGL_TRANSFER_TO_HOST);
 }
 
 int virgl_renderer_transfer_read_iov(uint32_t handle, uint32_t ctx_id,
@@ -143,8 +155,10 @@ int virgl_renderer_transfer_read_iov(uint32_t handle, uint32_t ctx_id,
    transfer_info.offset = offset;
    transfer_info.iovec = iovec;
    transfer_info.iovec_cnt = iovec_cnt;
+   transfer_info.context0 = true;
+   transfer_info.synchronized = false;
 
-   return vrend_renderer_transfer_iov(&transfer_info, VREND_TRANSFER_READ);
+   return vrend_renderer_transfer_iov(&transfer_info, VIRGL_TRANSFER_FROM_HOST);
 }
 
 int virgl_renderer_resource_attach_iov(int res_handle, struct iovec *iov,
@@ -189,6 +203,18 @@ int virgl_renderer_resource_get_info(int res_handle,
 #endif
 
    return ret;
+}
+
+int virgl_has_gl_colorspace(void)
+{
+   bool egl_colorspace = false;
+#ifdef HAVE_EPOXY_EGL_H
+   if (egl_info)
+      egl_colorspace = virgl_has_egl_khr_gl_colorspace(egl_info);
+#endif
+   return use_context == CONTEXT_NONE ||
+         use_context == CONTEXT_GLX ||
+         (use_context == CONTEXT_EGL && egl_colorspace);
 }
 
 void virgl_renderer_get_cap_set(uint32_t cap_set, uint32_t *max_ver,
@@ -247,7 +273,7 @@ static void destroy_gl_context(virgl_renderer_gl_context ctx)
    return rcbs->destroy_gl_context(dev_cookie, ctx);
 }
 
-static int make_current(int scanout_idx, virgl_renderer_gl_context ctx)
+static int make_current(virgl_renderer_gl_context ctx)
 {
 #ifdef HAVE_EPOXY_EGL_H
    if (use_context == CONTEXT_EGL)
@@ -257,7 +283,7 @@ static int make_current(int scanout_idx, virgl_renderer_gl_context ctx)
    if (use_context == CONTEXT_GLX)
       return virgl_glx_make_context_current(glx_info, ctx);
 #endif
-   return rcbs->make_current(dev_cookie, scanout_idx, ctx);
+   return rcbs->make_current(dev_cookie, 0, ctx);
 }
 
 static struct vrend_if_cbs virgl_cbs = {
@@ -269,12 +295,12 @@ static struct vrend_if_cbs virgl_cbs = {
 
 void *virgl_renderer_get_cursor_data(uint32_t resource_id, uint32_t *width, uint32_t *height)
 {
+   vrend_renderer_force_ctx_0();
    return vrend_renderer_get_cursor_contents(resource_id, width, height);
 }
 
 void virgl_renderer_poll(void)
 {
-   vrend_renderer_check_queries();
    vrend_renderer_check_fences();
 }
 
@@ -321,7 +347,7 @@ int virgl_renderer_init(void *cookie, int flags, struct virgl_renderer_callbacks
          return -1;
       use_context = CONTEXT_EGL;
 #else
-      fprintf(stderr, "EGL is not supported on this platform\n");
+      vrend_printf( "EGL is not supported on this platform\n");
       return -1;
 #endif
    } else if (flags & VIRGL_RENDERER_USE_GLX) {
@@ -331,7 +357,7 @@ int virgl_renderer_init(void *cookie, int flags, struct virgl_renderer_callbacks
          return -1;
       use_context = CONTEXT_GLX;
 #else
-      fprintf(stderr, "GLX is not supported on this platform\n");
+      vrend_printf( "GLX is not supported on this platform\n");
       return -1;
 #endif
    }
@@ -368,4 +394,9 @@ void virgl_renderer_reset(void)
 int virgl_renderer_get_poll_fd(void)
 {
    return vrend_renderer_get_poll_fd();
+}
+
+virgl_debug_callback_type virgl_set_debug_callback(virgl_debug_callback_type cb)
+{
+   return vrend_set_debug_callback(cb);
 }

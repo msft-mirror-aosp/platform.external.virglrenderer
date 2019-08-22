@@ -50,11 +50,19 @@
 #include "vrend_debug.h"
 
 #include "virgl_hw.h"
+#include "virglrenderer.h"
 
 #include "tgsi/tgsi_text.h"
 
 #ifdef HAVE_EVENTFD
 #include <sys/eventfd.h>
+#endif
+
+#ifdef HAVE_EPOXY_EGL_H
+#include "virgl_gbm.h"
+#include "virgl_egl.h"
+extern struct virgl_gbm *gbm;
+extern struct virgl_egl *egl;
 #endif
 
 /* debugging via KHR_debug extension */
@@ -677,6 +685,20 @@ static inline bool vrend_format_can_render(enum virgl_formats format)
 static inline bool vrend_format_is_ds(enum virgl_formats format)
 {
    return tex_conv_table[format].bindings & VIRGL_BIND_DEPTH_STENCIL;
+}
+
+static inline bool vrend_format_can_scanout(enum virgl_formats format)
+{
+#ifdef ENABLE_GBM_ALLOCATION
+   uint32_t gbm_format = virgl_gbm_convert_format(format);
+   if (!gbm_format)
+      return false;
+
+   return gbm_device_is_format_supported(gbm->device, gbm_format, GBM_BO_USE_SCANOUT);
+#else
+   (void)format;
+   return true;
+#endif
 }
 
 struct vrend_context_tweaks *vrend_get_context_tweaks(struct vrend_context *ctx)
@@ -2445,34 +2467,21 @@ void vrend_set_viewport_states(struct vrend_context *ctx,
           ctx->sub->vps[idx].cur_y != y ||
           ctx->sub->vps[idx].width != width ||
           ctx->sub->vps[idx].height != height ||
+          ctx->sub->vps[idx].near_val != near_val ||
+          ctx->sub->vps[idx].far_val != far_val ||
           (!(ctx->sub->viewport_state_initialized &= (1 << idx)))) {
          ctx->sub->vps[idx].cur_x = x;
          ctx->sub->vps[idx].cur_y = y;
          ctx->sub->vps[idx].width = width;
          ctx->sub->vps[idx].height = height;
+         ctx->sub->vps[idx].near_val = near_val;
+         ctx->sub->vps[idx].far_val = far_val;
          ctx->sub->viewport_state_dirty |= (1 << idx);
       }
 
       if (idx == 0) {
          if (ctx->sub->viewport_is_negative != viewport_is_negative)
             ctx->sub->viewport_is_negative = viewport_is_negative;
-      }
-
-      if (ctx->sub->vps[idx].near_val != near_val ||
-          ctx->sub->vps[idx].far_val != far_val) {
-         ctx->sub->vps[idx].near_val = near_val;
-         ctx->sub->vps[idx].far_val = far_val;
-
-         if (idx && has_feature(feat_viewport_array))
-            if (vrend_state.use_gles) {
-               glDepthRangeIndexedfOES(idx, ctx->sub->vps[idx].near_val, ctx->sub->vps[idx].far_val);
-            } else
-               glDepthRangeIndexed(idx, ctx->sub->vps[idx].near_val, ctx->sub->vps[idx].far_val);
-         else
-            if (vrend_state.use_gles)
-               glDepthRangefOES(ctx->sub->vps[idx].near_val, ctx->sub->vps[idx].far_val);
-            else
-               glDepthRange(ctx->sub->vps[idx].near_val, ctx->sub->vps[idx].far_val);
       }
    }
 }
@@ -3028,9 +3037,11 @@ static inline bool can_emulate_logicop(enum pipe_logicop op)
 
 
 static inline void vrend_fill_shader_key(struct vrend_context *ctx,
-                                         unsigned type,
+                                         struct vrend_shader_selector *sel,
                                          struct vrend_shader_key *key)
 {
+   unsigned type = sel->type;
+
    if (vrend_state.use_core_profile == true) {
       int i;
       bool add_alpha_test = true;
@@ -3082,33 +3093,40 @@ static inline void vrend_fill_shader_key(struct vrend_context *ctx,
 
    int prev_type = -1;
 
-   switch (type) {
-   case PIPE_SHADER_GEOMETRY:
-      if (key->tcs_present || key->tes_present)
-	 prev_type = PIPE_SHADER_TESS_EVAL;
-      else
-	 prev_type = PIPE_SHADER_VERTEX;
-      break;
-   case PIPE_SHADER_FRAGMENT:
-      if (key->gs_present)
-	 prev_type = PIPE_SHADER_GEOMETRY;
-      else if (key->tcs_present || key->tes_present)
-	 prev_type = PIPE_SHADER_TESS_EVAL;
-      else
-	 prev_type = PIPE_SHADER_VERTEX;
-      break;
-   case PIPE_SHADER_TESS_EVAL:
-      if (key->tcs_present)
-         prev_type = PIPE_SHADER_TESS_CTRL;
-      else
+   /* Gallium sends and binds the shaders in the reverse order, so if an
+    * old shader is still bound we should ignore the "previous" (as in
+    * execution order) shader when the key is evaluated, unless the currently
+    * bound shader selector is actually refers to the current shader. */
+   if (ctx->sub->shaders[type] == sel) {
+      switch (type) {
+      case PIPE_SHADER_GEOMETRY:
+         if (key->tcs_present || key->tes_present)
+            prev_type = PIPE_SHADER_TESS_EVAL;
+         else
+            prev_type = PIPE_SHADER_VERTEX;
+         break;
+      case PIPE_SHADER_FRAGMENT:
+         if (key->gs_present)
+            prev_type = PIPE_SHADER_GEOMETRY;
+         else if (key->tcs_present || key->tes_present)
+            prev_type = PIPE_SHADER_TESS_EVAL;
+         else
+            prev_type = PIPE_SHADER_VERTEX;
+         break;
+      case PIPE_SHADER_TESS_EVAL:
+         if (key->tcs_present)
+            prev_type = PIPE_SHADER_TESS_CTRL;
+         else
+            prev_type = PIPE_SHADER_VERTEX;
+         break;
+      case PIPE_SHADER_TESS_CTRL:
          prev_type = PIPE_SHADER_VERTEX;
-      break;
-   case PIPE_SHADER_TESS_CTRL:
-      prev_type = PIPE_SHADER_VERTEX;
-      break;
-   default:
-      break;
+         break;
+      default:
+         break;
+      }
    }
+
    if (prev_type != -1 && ctx->sub->shaders[prev_type]) {
       key->prev_stage_pervertex_out = ctx->sub->shaders[prev_type]->sinfo.has_pervertex_out;
       key->prev_stage_num_clip_out = ctx->sub->shaders[prev_type]->sinfo.num_clip_out;
@@ -3121,6 +3139,7 @@ static inline void vrend_fill_shader_key(struct vrend_context *ctx,
       memcpy(key->prev_stage_generic_and_patch_outputs_layout,
              ctx->sub->shaders[prev_type]->sinfo.generic_outputs_layout,
              64 * sizeof (struct vrend_layout_info));
+      key->force_invariant_inputs = ctx->sub->shaders[prev_type]->sinfo.invariant_outputs;
    }
 
    int next_type = -1;
@@ -3219,7 +3238,7 @@ static int vrend_shader_select(struct vrend_context *ctx,
    int r;
 
    memset(&key, 0, sizeof(key));
-   vrend_fill_shader_key(ctx, sel->type, &key);
+   vrend_fill_shader_key(ctx, sel, &key);
 
    if (sel->current && !memcmp(&sel->current->key, &key, sizeof(key)))
       return 0;
@@ -3505,6 +3524,8 @@ void vrend_clear(struct vrend_context *ctx,
 
    vrend_use_program(ctx, 0);
 
+   glDisable(GL_SCISSOR_TEST);
+
    if (buffers & PIPE_CLEAR_COLOR) {
       if (ctx->sub->nr_cbufs && ctx->sub->surf[0] && vrend_format_is_emulated_alpha(ctx->sub->surf[0]->format)) {
          glClearColor(color->f[3], 0.0, 0.0, 0.0);
@@ -3616,6 +3637,10 @@ void vrend_clear(struct vrend_context *ctx,
                      ctx->sub->hw_blend_state.rt[0].colormask & PIPE_MASK_A ? GL_TRUE : GL_FALSE);
       }
    }
+   if (ctx->sub->hw_rs_state.scissor)
+      glEnable(GL_SCISSOR_TEST);
+   else
+      glDisable(GL_SCISSOR_TEST);
 }
 
 static void vrend_update_scissor_state(struct vrend_context *ctx)
@@ -3658,6 +3683,17 @@ static void vrend_update_viewport_state(struct vrend_context *ctx)
          glViewportIndexedf(idx, ctx->sub->vps[idx].cur_x, cy, ctx->sub->vps[idx].width, ctx->sub->vps[idx].height);
       else
          glViewport(ctx->sub->vps[idx].cur_x, cy, ctx->sub->vps[idx].width, ctx->sub->vps[idx].height);
+
+      if (idx && has_feature(feat_viewport_array))
+         if (vrend_state.use_gles) {
+            glDepthRangeIndexedfOES(idx, ctx->sub->vps[idx].near_val, ctx->sub->vps[idx].far_val);
+         } else
+            glDepthRangeIndexed(idx, ctx->sub->vps[idx].near_val, ctx->sub->vps[idx].far_val);
+      else
+         if (vrend_state.use_gles)
+            glDepthRangefOES(ctx->sub->vps[idx].near_val, ctx->sub->vps[idx].far_val);
+         else
+            glDepthRange(ctx->sub->vps[idx].near_val, ctx->sub->vps[idx].far_val);
    }
 
    ctx->sub->viewport_state_dirty = 0;
@@ -4126,7 +4162,7 @@ void vrend_inject_tcs(struct vrend_context *ctx, int vertices_per_patch)
                                                                  false, PIPE_SHADER_TESS_CTRL);
    struct vrend_shader *shader;
    shader = CALLOC_STRUCT(vrend_shader);
-   vrend_fill_shader_key(ctx, sel->type, &shader->key);
+   vrend_fill_shader_key(ctx, sel, &shader->key);
 
    shader->sel = sel;
    list_inithead(&shader->programs);
@@ -5249,6 +5285,7 @@ static void vrend_hw_emit_rs(struct vrend_context *ctx)
       glEnable(GL_SCISSOR_TEST);
    else
       glDisable(GL_SCISSOR_TEST);
+   ctx->sub->hw_rs_state.scissor = state->scissor;
 
 }
 
@@ -6108,18 +6145,75 @@ vrend_renderer_resource_copy_args(struct vrend_renderer_resource_create_args *ar
    gr->base.array_size = args->array_size;
 }
 
+static void *vrend_allocate_using_gbm(struct vrend_resource *gr)
+{
+#ifdef ENABLE_GBM_ALLOCATION
+   uint32_t gbm_flags = virgl_gbm_convert_flags(gr->base.bind);
+   uint32_t gbm_format = virgl_gbm_convert_format(gr->base.format);
+   if (gr->base.depth0 != 1 || gr->base.last_level != 0 || gr->base.nr_samples != 0)
+      return NULL;
+
+   if (!gbm_format)
+      return NULL;
+
+   if (!gbm_flags)
+      return NULL;
+
+   if ((gr->base.bind & (VIRGL_RES_BIND_SCANOUT | VIRGL_RES_BIND_SHARED)) == 0)
+      return NULL;
+
+   if (!gbm_device_is_format_supported(gbm->device, gbm_format, gbm_flags))
+      return NULL;
+
+   /*
+    * loader_dri3_get_buffers requests 1x1 textures with the following flags:
+    *  *_BIND_SCANOUT | *_BIND_SHARED | *_SAMPLER_VIEW | *_RENDER_TARGET.
+    * 32 x 32 buffers are also requested with the same flags and never sent to the
+    * display. TODO(gsingh): figure out how to optimize this.
+    */
+   if (gr->base.width0 == 1 && gr->base.height0 == 1)
+      return NULL;
+
+   struct gbm_bo *bo = gbm_bo_create(gbm->device, gr->base.width0, gr->base.height0,
+                                     gbm_format, gbm_flags);
+   if (!bo)
+      return NULL;
+
+   void *image = virgl_egl_image_from_dmabuf(egl, bo);
+   if (!image) {
+      gbm_bo_destroy(bo);
+      return NULL;
+   }
+
+   gr->egl_image = image;
+   gr->gbm_bo = bo;
+   return image;
+#else
+   (void)gr;
+   return NULL;
+#endif
+}
+
 static int vrend_renderer_resource_allocate_texture(struct vrend_resource *gr,
                                                     void *image_oes)
 {
    uint level;
    GLenum internalformat, glformat, gltype;
+   enum virgl_formats format = gr->base.format;
    struct vrend_texture *gt = (struct vrend_texture *)gr;
    struct pipe_resource *pr = &gr->base;
 
    if (pr->width0 == 0)
       return EINVAL;
 
-   enum virgl_formats format = vrend_format_replace_emulated(gr->base.bind, gr->base.format);
+   if (!image_oes)
+      image_oes = vrend_allocate_using_gbm(gr);
+
+   if (image_oes)
+      gr->base.bind &= ~VIRGL_BIND_PREFER_EMULATED_BGRA;
+   else
+      format = vrend_format_replace_emulated(gr->base.bind, gr->base.format);
+
    bool format_can_texture_storage = has_feature(feat_texture_storage) &&
          (tex_conv_table[format].flags & VIRGL_TEXTURE_CAN_TEXTURE_STORAGE);
 
@@ -6370,6 +6464,13 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
    default:
       break;
    }
+
+#ifdef ENABLE_GBM_ALLOCATION
+   if (res->egl_image)
+      virgl_egl_image_destroy(egl, res->egl_image);
+   if (res->gbm_bo)
+      gbm_bo_destroy(res->gbm_bo);
+#endif
 
    free(res);
 }
@@ -7285,6 +7386,11 @@ int vrend_renderer_transfer_iov(const struct vrend_transfer_info *info,
       return EINVAL;
    }
 
+#ifdef ENABLE_GBM_ALLOCATION
+   if (res->gbm_bo)
+      return virgl_gbm_transfer(res->gbm_bo, transfer_mode, iov, num_iovs, info);
+#endif
+
    if (!check_transfer_bounds(res, info))
       return EINVAL;
 
@@ -7295,6 +7401,11 @@ int vrend_renderer_transfer_iov(const struct vrend_transfer_info *info,
       vrend_renderer_force_ctx_0();
       ctx = NULL;
    }
+
+#ifdef ENABLE_GBM_ALLOCATION
+   if (res->gbm_bo)
+      return virgl_gbm_transfer(res->gbm_bo, transfer_mode, iov, num_iovs, info);
+#endif
 
    switch (transfer_mode) {
    case VIRGL_TRANSFER_TO_HOST:
@@ -9150,8 +9261,9 @@ static void vrend_renderer_fill_caps_v2(int gl_ver, int gles_ver,  union virgl_c
    /* Count this up when you add a feature flag that is used to set a CAP in
     * the guest that was set unconditionally before. Then check that flag and
     * this value to avoid regressions when a guest with a new mesa version is
-    * run on an old virgl host */
-   caps->v2.host_feature_check_version = 2;
+    * run on an old virgl host. Use it also to indicate non-cap fixes on the
+    * host that help enable features in the guest. */
+   caps->v2.host_feature_check_version = 3;
 
    glGetFloatv(GL_ALIASED_POINT_SIZE_RANGE, range);
    caps->v2.min_aliased_point_size = range[0];
@@ -9375,14 +9487,17 @@ static void vrend_renderer_fill_caps_v2(int gl_ver, int gles_ver,  union virgl_c
       caps->v2.capability_bits |= VIRGL_CAP_INDIRECT_PARAMS;
 
    for (int i = 0; i < VIRGL_FORMAT_MAX; i++) {
+      enum virgl_formats fmt = (enum virgl_formats)i;
       if (tex_conv_table[i].internalformat != 0) {
-         enum virgl_formats fmt = (enum virgl_formats)i;
          if (vrend_format_can_readback(fmt)) {
             VREND_DEBUG(dbg_features, NULL, "Support readback of %s\n",
                         util_format_name(fmt));
             set_format_bit(&caps->v2.supported_readback_formats, fmt);
          }
       }
+
+      if (vrend_format_can_scanout(fmt))
+         set_format_bit(&caps->v2.scanout, fmt);
    }
 
    if (has_feature(feat_clip_control))
@@ -9522,6 +9637,7 @@ void *vrend_renderer_get_cursor_contents(uint32_t res_handle, uint32_t *width, u
    glBindTexture(res->target, 0);
    return data2;
 }
+
 
 void vrend_renderer_force_ctx_0(void)
 {
@@ -9819,4 +9935,40 @@ int vrend_renderer_get_poll_fd(void)
       return -1;
 
    return vrend_state.eventfd;
+}
+
+int vrend_renderer_execute(void *execute_args, uint32_t execute_size)
+{
+   /*
+    * This function only supports VIRGL_RENDERER_STRUCTURE_TYPE_RESOURCE_QUERY currently.
+    */
+   struct vrend_resource *res;
+   struct virgl_renderer_export_query *export_query = execute_args;
+   if (execute_size != sizeof(struct virgl_renderer_export_query))
+      return -EINVAL;
+
+   if (export_query->hdr.stype != VIRGL_RENDERER_STRUCTURE_TYPE_EXPORT_QUERY ||
+       export_query->hdr.stype_version != 0 ||
+       export_query->hdr.size != sizeof(struct virgl_renderer_export_query))
+      return -EINVAL;
+
+   res = vrend_resource_lookup(export_query->in_resource_id, 0);
+   if (!res)
+      return -EINVAL;
+
+#ifdef ENABLE_GBM_ALLOCATION
+   if (res->gbm_bo)
+      return virgl_gbm_export_query(res->gbm_bo, export_query);
+#endif
+
+   /*
+    * Implementations that support eglExportDMABUFImageMESA can also export certain resources.
+    * This is omitted currently since virgl_renderer_get_fd_for_texture supports that use case.
+    */
+   export_query->out_num_fds = 0;
+   export_query->out_fourcc = 0;
+   if (export_query->in_export_fds)
+      return -EINVAL;
+
+   return 0;
 }

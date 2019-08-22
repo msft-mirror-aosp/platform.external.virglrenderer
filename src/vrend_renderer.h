@@ -84,6 +84,7 @@ struct vrend_resource {
    struct iovec *iov;
    uint32_t num_iovs;
    uint64_t mipmap_offsets[VR_MAX_TEXTURE_2D_LEVELS];
+   void *gbm_bo, *egl_image;
 };
 
 #define VIRGL_TEXTURE_NEED_SWIZZLE        (1 << 0)
@@ -98,20 +99,6 @@ struct vrend_format_table {
    uint8_t swizzle[4];
    uint32_t bindings;
    uint32_t flags;
-};
-
-struct vrend_transfer_info {
-   uint32_t handle;
-   uint32_t ctx_id;
-   int level;
-   uint32_t stride;
-   uint32_t layer_stride;
-   unsigned int iovec_cnt;
-   struct iovec *iovec;
-   uint64_t offset;
-   bool context0;
-   struct pipe_box *box;
-   bool synchronized;
 };
 
 struct vrend_if_cbs {
@@ -465,4 +452,7 @@ static const struct gl_version gl_versions[] = { {4,5}, {4,4}, {4,3}, {4,2}, {4,
                                                  {3,3}, {3,2}, {3,1}, {3,0} };
 
 extern struct vrend_if_cbs *vrend_clicbs;
+
+int vrend_renderer_execute(void *execute_args, uint32_t execute_size);
+
 #endif

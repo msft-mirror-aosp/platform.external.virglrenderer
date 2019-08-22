@@ -31,69 +31,27 @@
 #endif
 
 #define EGL_EGLEXT_PROTOTYPES
-#include <dirent.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <epoxy/egl.h>
-#include <gbm.h>
 #include <xf86drm.h>
 #include "virglrenderer.h"
 #include "virgl_egl.h"
-
 #include "virgl_hw.h"
+#include "virgl_gbm.h"
+
 struct virgl_egl {
-   int fd;
-   struct gbm_device *gbm_dev;
+   struct virgl_gbm *gbm;
    EGLDisplay egl_display;
    EGLConfig egl_conf;
    EGLContext egl_ctx;
    bool have_mesa_drm_image;
    bool have_mesa_dma_buf_img_export;
-   bool have_egl_khr_gl_colorspace;
+   bool have_khr_gl_colorspace;
+   bool have_ext_image_dma_buf_import;
+   bool have_ext_image_dma_buf_import_modifiers;
 };
-
-static int egl_rendernode_open(void)
-{
-   DIR *dir;
-   struct dirent *e;
-   int r, fd;
-   char *p;
-   dir = opendir("/dev/dri");
-   if (!dir)
-      return -1;
-
-   fd = -1;
-   while ((e = readdir(dir))) {
-      if (e->d_type != DT_CHR)
-         continue;
-
-      if (strncmp(e->d_name, "renderD", 7))
-         continue;
-
-      r = asprintf(&p, "/dev/dri/%s", e->d_name);
-      if (r < 0)
-         return -1;
-
-      r = open(p, O_RDWR | O_CLOEXEC | O_NOCTTY | O_NONBLOCK);
-      if (r < 0){
-         free(p);
-         continue;
-      }
-      fd = r;
-      free(p);
-      break;
-   }
-
-   closedir(dir);
-   if (fd < 0)
-      return -1;
-   return fd;
-}
 
 static bool virgl_egl_has_extension_in_string(const char *haystack, const char *needle)
 {
@@ -124,7 +82,7 @@ static bool virgl_egl_has_extension_in_string(const char *haystack, const char *
    return false;
 }
 
-struct virgl_egl *virgl_egl_init(int fd, bool surfaceless, bool gles)
+struct virgl_egl *virgl_egl_init(struct virgl_gbm *gbm, bool surfaceless, bool gles)
 {
    static EGLint conf_att[] = {
       EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
@@ -139,36 +97,25 @@ struct virgl_egl *virgl_egl_init(int fd, bool surfaceless, bool gles)
       EGL_CONTEXT_CLIENT_VERSION, 2,
       EGL_NONE
    };
-   EGLBoolean b;
+   EGLBoolean success;
    EGLenum api;
-   EGLint major, minor, n;
+   EGLint major, minor, num_configs;
    const char *extension_list;
-   struct virgl_egl *d;
+   struct virgl_egl *egl;
 
-   d = malloc(sizeof(struct virgl_egl));
-   if (!d)
+   egl = calloc(1, sizeof(struct virgl_egl));
+   if (!egl)
       return NULL;
 
    if (gles)
-      conf_att[3] = EGL_OPENGL_ES_BIT;
+      conf_att[3] = EGL_OPENGL_ES2_BIT;
 
-   if (surfaceless) {
+   if (surfaceless)
       conf_att[1] = EGL_PBUFFER_BIT;
-      d->fd = -1;
-      d->gbm_dev = NULL;
-   } else {
-      if (fd >= 0) {
-         d->fd = fd;
-      } else {
-         d->fd = egl_rendernode_open();
-      }
-      if (d->fd == -1)
-         goto fail;
-      d->gbm_dev = gbm_create_device(d->fd);
-      if (!d->gbm_dev)
-         goto fail;
-   }
+   else if (!gbm)
+      goto fail;
 
+   egl->gbm = gbm;
    const char *client_extensions = eglQueryString (NULL, EGL_EXTENSIONS);
 
    if (strstr (client_extensions, "EGL_KHR_platform_base")) {
@@ -179,11 +126,11 @@ struct virgl_egl *virgl_egl_init(int fd, bool surfaceless, bool gles)
         goto fail;
 
       if (surfaceless) {
-         d->egl_display = get_platform_display (EGL_PLATFORM_SURFACELESS_MESA,
-                                                EGL_DEFAULT_DISPLAY, NULL);
+         egl->egl_display = get_platform_display (EGL_PLATFORM_SURFACELESS_MESA,
+                                                  EGL_DEFAULT_DISPLAY, NULL);
       } else
-         d->egl_display = get_platform_display (EGL_PLATFORM_GBM_KHR,
-                                                (EGLNativeDisplayType)d->gbm_dev, NULL);
+         egl->egl_display = get_platform_display (EGL_PLATFORM_GBM_KHR,
+                                                  (EGLNativeDisplayType)egl->gbm->device, NULL);
    } else if (strstr (client_extensions, "EGL_EXT_platform_base")) {
       PFNEGLGETPLATFORMDISPLAYEXTPROC get_platform_display =
          (PFNEGLGETPLATFORMDISPLAYEXTPROC) eglGetProcAddress ("eglGetPlatformDisplayEXT");
@@ -192,29 +139,39 @@ struct virgl_egl *virgl_egl_init(int fd, bool surfaceless, bool gles)
         goto fail;
 
       if (surfaceless) {
-         d->egl_display = get_platform_display (EGL_PLATFORM_SURFACELESS_MESA,
-                                                EGL_DEFAULT_DISPLAY, NULL);
+         egl->egl_display = get_platform_display (EGL_PLATFORM_SURFACELESS_MESA,
+                                                  EGL_DEFAULT_DISPLAY, NULL);
       } else
-         d->egl_display = get_platform_display (EGL_PLATFORM_GBM_KHR,
-                                                (EGLNativeDisplayType)d->gbm_dev, NULL);
+         egl->egl_display = get_platform_display (EGL_PLATFORM_GBM_KHR,
+                                                 (EGLNativeDisplayType)egl->gbm->device, NULL);
    } else {
-      d->egl_display = eglGetDisplay((EGLNativeDisplayType)d->gbm_dev);
+      egl->egl_display = eglGetDisplay((EGLNativeDisplayType)egl->gbm->device);
    }
 
-   if (!d->egl_display)
+   if (!egl->egl_display) {
+      /*
+       * Don't fallback to the default display if the fd provided by (*get_drm_fd)
+       * can't be used.
+       */
+      if (egl->gbm && egl->gbm->fd < 0)
+         goto fail;
+
+      egl->egl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+      if (!egl->egl_display)
+         goto fail;
+   }
+
+   success = eglInitialize(egl->egl_display, &major, &minor);
+   if (!success)
       goto fail;
 
-   b = eglInitialize(d->egl_display, &major, &minor);
-   if (!b)
-      goto fail;
-
-   extension_list = eglQueryString(d->egl_display, EGL_EXTENSIONS);
+   extension_list = eglQueryString(egl->egl_display, EGL_EXTENSIONS);
 #ifdef VIRGL_EGL_DEBUG
    vrend_printf( "EGL major/minor: %d.%d\n", major, minor);
    vrend_printf( "EGL version: %s\n",
-           eglQueryString(d->egl_display, EGL_VERSION));
+           eglQueryString(egl->egl_display, EGL_VERSION));
    vrend_printf( "EGL vendor: %s\n",
-           eglQueryString(d->egl_display, EGL_VENDOR));
+           eglQueryString(egl->egl_display, EGL_VENDOR));
    vrend_printf( "EGL extensions: %s\n", extension_list);
 #endif
    /* require surfaceless context */
@@ -228,212 +185,258 @@ struct virgl_egl *virgl_egl_init(int fd, bool surfaceless, bool gles)
       goto fail;
    }
 
-   d->have_mesa_drm_image = false;
-   d->have_mesa_dma_buf_img_export = false;
+   egl->have_mesa_drm_image = false;
+   egl->have_mesa_dma_buf_img_export = false;
    if (virgl_egl_has_extension_in_string(extension_list, "EGL_MESA_drm_image"))
-      d->have_mesa_drm_image = true;
+      egl->have_mesa_drm_image = true;
 
    if (virgl_egl_has_extension_in_string(extension_list, "EGL_MESA_image_dma_buf_export"))
-      d->have_mesa_dma_buf_img_export = true;
+      egl->have_mesa_dma_buf_img_export = true;
 
-   if (d->have_mesa_drm_image == false && d->have_mesa_dma_buf_img_export == false) {
-      vrend_printf( "failed to find drm image extensions\n");
-      goto fail;
-   }
+   if (virgl_egl_has_extension_in_string(extension_list, "EGL_EXT_image_dma_buf_import"))
+      egl->have_ext_image_dma_buf_import = true;
 
-   d->have_egl_khr_gl_colorspace =
+   if (virgl_egl_has_extension_in_string(extension_list, "EGL_EXT_image_dma_buf_import_modifiers"))
+      egl->have_ext_image_dma_buf_import_modifiers = true;
+
+   egl->have_khr_gl_colorspace =
          virgl_egl_has_extension_in_string(extension_list, "EGL_KHR_gl_colorspace");
 
    if (gles)
       api = EGL_OPENGL_ES_API;
    else
       api = EGL_OPENGL_API;
-   b = eglBindAPI(api);
-   if (!b)
+   success = eglBindAPI(api);
+   if (!success)
       goto fail;
 
-   b = eglChooseConfig(d->egl_display, conf_att, &d->egl_conf,
-                       1, &n);
-
-   if (!b || n != 1)
+   success = eglChooseConfig(egl->egl_display, conf_att, &egl->egl_conf,
+                             1, &num_configs);
+   if (!success || num_configs != 1)
       goto fail;
 
-   d->egl_ctx = eglCreateContext(d->egl_display,
-                                 d->egl_conf,
-                                 EGL_NO_CONTEXT,
-                                 ctx_att);
-   if (!d->egl_ctx)
+   egl->egl_ctx = eglCreateContext(egl->egl_display, egl->egl_conf, EGL_NO_CONTEXT,
+                                   ctx_att);
+   if (!egl->egl_ctx)
       goto fail;
 
+   eglMakeCurrent(egl->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                  egl->egl_ctx);
+   return egl;
 
-   eglMakeCurrent(d->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE,
-                  d->egl_ctx);
-   return d;
  fail:
-   free(d);
+   free(egl);
    return NULL;
 }
 
-void virgl_egl_destroy(struct virgl_egl *d)
+void virgl_egl_destroy(struct virgl_egl *egl)
 {
-   eglMakeCurrent(d->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE,
+   eglMakeCurrent(egl->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE,
                   EGL_NO_CONTEXT);
-   eglDestroyContext(d->egl_display, d->egl_ctx);
-   eglTerminate(d->egl_display);
-   if (d->gbm_dev)
-      gbm_device_destroy(d->gbm_dev);
-   if (d->fd >= 0)
-      close(d->fd);
-   free(d);
+   eglDestroyContext(egl->egl_display, egl->egl_ctx);
+   eglTerminate(egl->egl_display);
+   free(egl);
 }
 
-virgl_renderer_gl_context virgl_egl_create_context(struct virgl_egl *ve, struct virgl_gl_ctx_param *vparams)
+virgl_renderer_gl_context virgl_egl_create_context(struct virgl_egl *egl, struct virgl_gl_ctx_param *vparams)
 {
-   EGLContext eglctx;
+   EGLContext egl_ctx;
    EGLint ctx_att[] = {
       EGL_CONTEXT_CLIENT_VERSION, vparams->major_ver,
       EGL_CONTEXT_MINOR_VERSION_KHR, vparams->minor_ver,
       EGL_NONE
    };
-   eglctx = eglCreateContext(ve->egl_display,
-                             ve->egl_conf,
+   egl_ctx = eglCreateContext(egl->egl_display,
+                             egl->egl_conf,
                              vparams->shared ? eglGetCurrentContext() : EGL_NO_CONTEXT,
                              ctx_att);
-   return (virgl_renderer_gl_context)eglctx;
+   return (virgl_renderer_gl_context)egl_ctx;
 }
 
-void virgl_egl_destroy_context(struct virgl_egl *ve, virgl_renderer_gl_context virglctx)
+void virgl_egl_destroy_context(struct virgl_egl *egl, virgl_renderer_gl_context virglctx)
 {
-   EGLContext eglctx = (EGLContext)virglctx;
-   eglDestroyContext(ve->egl_display, eglctx);
+   EGLContext egl_ctx = (EGLContext)virglctx;
+   eglDestroyContext(egl->egl_display, egl_ctx);
 }
 
-int virgl_egl_make_context_current(struct virgl_egl *ve, virgl_renderer_gl_context virglctx)
+int virgl_egl_make_context_current(struct virgl_egl *egl, virgl_renderer_gl_context virglctx)
 {
-   EGLContext eglctx = (EGLContext)virglctx;
+   EGLContext egl_ctx = (EGLContext)virglctx;
 
-   return eglMakeCurrent(ve->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE,
-                         eglctx);
+   return eglMakeCurrent(egl->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                         egl_ctx);
 }
 
-virgl_renderer_gl_context virgl_egl_get_current_context(UNUSED struct virgl_egl *ve)
+virgl_renderer_gl_context virgl_egl_get_current_context(UNUSED struct virgl_egl *egl)
 {
-   EGLContext eglctx = eglGetCurrentContext();
-   return (virgl_renderer_gl_context)eglctx;
+   EGLContext egl_ctx = eglGetCurrentContext();
+   return (virgl_renderer_gl_context)egl_ctx;
 }
 
-int virgl_egl_get_fourcc_for_texture(struct virgl_egl *ve, uint32_t tex_id, uint32_t format, int *fourcc)
+int virgl_egl_get_fourcc_for_texture(struct virgl_egl *egl, uint32_t tex_id, uint32_t format, int *fourcc)
 {
    int ret = EINVAL;
 
    EGLImageKHR image;
-   EGLBoolean b;
+   EGLBoolean success;
 
-   if (!ve->have_mesa_dma_buf_img_export) {
+   if (!egl->have_mesa_dma_buf_img_export) {
       ret = 0;
       goto fallback;
    }
 
-   image = eglCreateImageKHR(ve->egl_display, eglGetCurrentContext(), EGL_GL_TEXTURE_2D_KHR, (EGLClientBuffer)(unsigned long)tex_id, NULL);
+   image = eglCreateImageKHR(egl->egl_display, eglGetCurrentContext(), EGL_GL_TEXTURE_2D_KHR,
+                            (EGLClientBuffer)(unsigned long)tex_id, NULL);
 
    if (!image)
       return EINVAL;
 
-   b = eglExportDMABUFImageQueryMESA(ve->egl_display, image, fourcc, NULL, NULL);
-   if (!b)
+   success = eglExportDMABUFImageQueryMESA(egl->egl_display, image, fourcc, NULL, NULL);
+   if (!success)
       goto out_destroy;
    ret = 0;
  out_destroy:
-   eglDestroyImageKHR(ve->egl_display, image);
+   eglDestroyImageKHR(egl->egl_display, image);
    return ret;
 
  fallback:
-   *fourcc = virgl_egl_get_gbm_format(format);
+   *fourcc = virgl_gbm_convert_format(format);
    return ret;
 }
 
-int virgl_egl_get_fd_for_texture2(struct virgl_egl *ve, uint32_t tex_id, int *fd,
+int virgl_egl_get_fd_for_texture2(struct virgl_egl *egl, uint32_t tex_id, int *fd,
                                   int *stride, int *offset)
 {
    int ret = EINVAL;
-   EGLImageKHR image = eglCreateImageKHR(ve->egl_display, eglGetCurrentContext(),
+   EGLImageKHR image = eglCreateImageKHR(egl->egl_display, eglGetCurrentContext(),
                                          EGL_GL_TEXTURE_2D_KHR,
                                          (EGLClientBuffer)(unsigned long)tex_id, NULL);
    if (!image)
       return EINVAL;
-   if (!ve->have_mesa_dma_buf_img_export)
+   if (!egl->have_mesa_dma_buf_img_export)
       goto out_destroy;
 
-   if (!eglExportDMABUFImageMESA(ve->egl_display, image, fd,
+   if (!eglExportDMABUFImageMESA(egl->egl_display, image, fd,
                                  stride, offset))
       goto out_destroy;
 
    ret = 0;
 
 out_destroy:
-   eglDestroyImageKHR(ve->egl_display, image);
+   eglDestroyImageKHR(egl->egl_display, image);
    return ret;
 }
 
-int virgl_egl_get_fd_for_texture(struct virgl_egl *ve, uint32_t tex_id, int *fd)
+int virgl_egl_get_fd_for_texture(struct virgl_egl *egl, uint32_t tex_id, int *fd)
 {
    EGLImageKHR image;
    EGLint stride;
    EGLint offset;
-   EGLBoolean b;
+   EGLBoolean success;
    int ret;
-   image = eglCreateImageKHR(ve->egl_display, eglGetCurrentContext(), EGL_GL_TEXTURE_2D_KHR, (EGLClientBuffer)(unsigned long)tex_id, NULL);
+   image = eglCreateImageKHR(egl->egl_display, eglGetCurrentContext(), EGL_GL_TEXTURE_2D_KHR,
+                            (EGLClientBuffer)(unsigned long)tex_id, NULL);
 
    if (!image)
       return EINVAL;
 
    ret = EINVAL;
-   if (ve->have_mesa_dma_buf_img_export) {
-      b = eglExportDMABUFImageMESA(ve->egl_display,
-                                   image,
-                                   fd,
-                                   &stride,
-                                   &offset);
-      if (!b)
+   if (egl->have_mesa_dma_buf_img_export) {
+      success = eglExportDMABUFImageMESA(egl->egl_display, image, fd, &stride,
+                                         &offset);
+      if (!success)
          goto out_destroy;
-   } else  {
-      /* No need to check have_mesa_drm_image, because if we come here
-       * it is supported (imposed by virgl_egl_init) */
+   } else if (egl->have_mesa_drm_image) {
       EGLint handle;
-      int r;
-      b = eglExportDRMImageMESA(ve->egl_display,
-                                image,
-                                NULL, &handle,
-                                &stride);
+      success = eglExportDRMImageMESA(egl->egl_display, image, NULL, &handle,
+                                      &stride);
 
-      if (!b)
-	 goto out_destroy;
+      if (!success)
+         goto out_destroy;
 
-      vrend_printf("image exported %d %d\n", handle, stride);
+      if (!egl->gbm)
+         goto out_destroy;
 
-      r = drmPrimeHandleToFD(ve->fd, handle, DRM_CLOEXEC, fd);
-      if (r < 0)
-	 goto out_destroy;
+      ret = drmPrimeHandleToFD(gbm_device_get_fd(egl->gbm->device), handle, DRM_CLOEXEC, fd);
+      if (ret < 0)
+         goto out_destroy;
+   } else {
+      goto out_destroy;
    }
+
    ret = 0;
  out_destroy:
-   eglDestroyImageKHR(ve->egl_display, image);
+   eglDestroyImageKHR(egl->egl_display, image);
    return ret;
 }
 
-bool virgl_has_egl_khr_gl_colorspace(struct virgl_egl *ve)
+bool virgl_has_egl_khr_gl_colorspace(struct virgl_egl *egl)
 {
-   return ve->have_egl_khr_gl_colorspace;
+   return egl->have_khr_gl_colorspace;
 }
 
-uint32_t virgl_egl_get_gbm_format(uint32_t format)
+void *virgl_egl_image_from_dmabuf(struct virgl_egl *egl, struct gbm_bo *bo)
 {
-   switch (format) {
-   case VIRGL_FORMAT_B8G8R8X8_UNORM:
-   case VIRGL_FORMAT_B8G8R8A8_UNORM:
-      return GBM_FORMAT_ARGB8888;
-   default:
-      vrend_printf( "unknown format to convert to GBM %d\n", format);
-      return 0;
+   int ret;
+   EGLImageKHR image;
+   int fds[4] = {-1, -1, -1, -1};
+   int num_planes = gbm_bo_get_plane_count(bo);
+   // When the bo has 3 planes with modifier support, it requires 37 components.
+   EGLint khr_image_attrs[37] = {
+      EGL_WIDTH,
+      gbm_bo_get_width(bo),
+      EGL_HEIGHT,
+      gbm_bo_get_height(bo),
+      EGL_LINUX_DRM_FOURCC_EXT,
+      (int)gbm_bo_get_format(bo),
+      EGL_NONE,
+   };
+
+   if (num_planes < 0 || num_planes > 4)
+      return (void *)EGL_NO_IMAGE_KHR;
+
+   for (int plane = 0; plane < num_planes; plane++) {
+      uint32_t handle = gbm_bo_get_handle_for_plane(bo, plane).u32;
+      ret = drmPrimeHandleToFD(gbm_device_get_fd(egl->gbm->device), handle, DRM_CLOEXEC,
+                               &fds[plane]);
+      if (ret < 0) {
+         vrend_printf( "failed to export plane handle\n");
+         image = (void *)EGL_NO_IMAGE_KHR;
+         goto out_close;
+      }
    }
+
+   size_t attrs_index = 6;
+   for (int plane = 0; plane < num_planes; plane++) {
+      khr_image_attrs[attrs_index++] = EGL_DMA_BUF_PLANE0_FD_EXT + plane * 3;
+      khr_image_attrs[attrs_index++] = fds[plane];
+      khr_image_attrs[attrs_index++] = EGL_DMA_BUF_PLANE0_OFFSET_EXT + plane * 3;
+      khr_image_attrs[attrs_index++] = gbm_bo_get_offset(bo, plane);
+      khr_image_attrs[attrs_index++] = EGL_DMA_BUF_PLANE0_PITCH_EXT + plane * 3;
+      khr_image_attrs[attrs_index++] = gbm_bo_get_stride_for_plane(bo, plane);
+      if (egl->have_ext_image_dma_buf_import_modifiers) {
+         const uint64_t modifier = gbm_bo_get_modifier(bo);
+         khr_image_attrs[attrs_index++] =
+         EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT + plane * 2;
+         khr_image_attrs[attrs_index++] = modifier & 0xfffffffful;
+         khr_image_attrs[attrs_index++] =
+         EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT + plane * 2;
+         khr_image_attrs[attrs_index++] = modifier >> 32;
+      }
+   }
+
+   khr_image_attrs[attrs_index++] = EGL_NONE;
+   image = eglCreateImageKHR(egl->egl_display, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, NULL,
+                             khr_image_attrs);
+
+out_close:
+   for (int plane = 0; plane < num_planes; plane++)
+      close(fds[plane]);
+
+   return (void*)image;
+}
+
+void virgl_egl_image_destroy(struct virgl_egl *egl, void *image)
+{
+   eglDestroyImageKHR(egl->egl_display, image);
 }

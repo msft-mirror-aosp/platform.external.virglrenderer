@@ -205,6 +205,7 @@ typedef int (*virgl_renderer_transfer_write_iov_t)(
     struct virgl_box *box,
     uint64_t offset,
     struct iovec *iovec,
+    unsigned int iovec_cnt);
 typedef void (*virgl_renderer_get_cap_set_t)(uint32_t set, uint32_t *max_ver,
                                              uint32_t *max_size);
 
@@ -257,5 +258,7 @@ f(virgl_renderer_resource_get_info) \
 struct virgl_renderer_virtio_interface {
     LIST_VIRGLRENDERER_API(VIRGLRENDERER_API_DEFINE_STRUCT_FIELD)
 };
+
+struct virgl_renderer_virtio_interface* get_default_virtio_interface();
 
 #endif

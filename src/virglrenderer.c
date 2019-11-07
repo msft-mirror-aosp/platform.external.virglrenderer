@@ -346,3 +346,14 @@ int virgl_renderer_get_poll_fd(void)
 {
    return vrend_renderer_get_poll_fd();
 }
+
+#define VIRGLRENDERER_API_REF_DEFAULT(api) \
+    api,
+
+static struct virgl_renderer_virtio_interface s_default_virtio_interface = {
+    LIST_VIRGLRENDERER_API(VIRGLRENDER_API_REF_DEFAULT)
+};
+
+struct virgl_renderer_virtio_interface* get_default_virtio_interface() {
+    return &s_default_virtio_interface;
+}

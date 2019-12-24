@@ -41,22 +41,12 @@
 #ifdef HAVE_EPOXY_EGL_H
 #include "virgl_gbm.h"
 #include "virgl_egl.h"
-struct virgl_gbm *gbm = NULL;
-struct virgl_egl *egl = NULL;
 #endif
 
 #ifdef HAVE_EPOXY_GLX_H
 #include "virgl_glx.h"
 static struct virgl_glx *glx_info;
 #endif
-
-enum {
-   CONTEXT_NONE,
-   CONTEXT_EGL,
-   CONTEXT_GLX
-};
-
-static int use_context = CONTEXT_NONE;
 
 /* new API - just wrap internal API for now */
 
@@ -171,7 +161,7 @@ int virgl_renderer_resource_attach_iov(int res_handle, struct iovec *iov,
 
 void virgl_renderer_resource_detach_iov(int res_handle, struct iovec **iov_p, int *num_iovs_p)
 {
-   return vrend_renderer_resource_detach_iov(res_handle, iov_p, num_iovs_p);
+   vrend_renderer_resource_detach_iov(res_handle, iov_p, num_iovs_p);
 }
 
 int virgl_renderer_create_fence(int client_fence_id, uint32_t ctx_id)
@@ -205,18 +195,6 @@ int virgl_renderer_resource_get_info(int res_handle,
 #endif
 
    return ret;
-}
-
-int virgl_has_gl_colorspace(void)
-{
-   bool egl_colorspace = false;
-#ifdef HAVE_EPOXY_EGL_H
-   if (egl)
-      egl_colorspace = virgl_has_egl_khr_gl_colorspace(egl);
-#endif
-   return use_context == CONTEXT_NONE ||
-         use_context == CONTEXT_GLX ||
-         (use_context == CONTEXT_EGL && egl_colorspace);
 }
 
 void virgl_renderer_get_cap_set(uint32_t cap_set, uint32_t *max_ver,
@@ -265,14 +243,18 @@ static virgl_renderer_gl_context create_gl_context(int scanout_idx, struct virgl
 static void destroy_gl_context(virgl_renderer_gl_context ctx)
 {
 #ifdef HAVE_EPOXY_EGL_H
-   if (use_context == CONTEXT_EGL)
-      return virgl_egl_destroy_context(egl, ctx);
+   if (use_context == CONTEXT_EGL) {
+      virgl_egl_destroy_context(egl, ctx);
+      return;
+   }
 #endif
 #ifdef HAVE_EPOXY_GLX_H
-   if (use_context == CONTEXT_GLX)
-      return virgl_glx_destroy_context(glx_info, ctx);
+   if (use_context == CONTEXT_GLX) {
+      virgl_glx_destroy_context(glx_info, ctx);
+      return;
+   }
 #endif
-   return rcbs->destroy_gl_context(dev_cookie, ctx);
+   rcbs->destroy_gl_context(dev_cookie, ctx);
 }
 
 static int make_current(virgl_renderer_gl_context ctx)
@@ -393,6 +375,9 @@ int virgl_renderer_init(void *cookie, int flags, struct virgl_renderer_callbacks
 int virgl_renderer_get_fd_for_texture(uint32_t tex_id, int *fd)
 {
 #ifdef HAVE_EPOXY_EGL_H
+   if (!egl)
+      return -1;
+
    return virgl_egl_get_fd_for_texture(egl, tex_id, fd);
 #else
    return -1;
@@ -402,6 +387,9 @@ int virgl_renderer_get_fd_for_texture(uint32_t tex_id, int *fd)
 int virgl_renderer_get_fd_for_texture2(uint32_t tex_id, int *fd, int *stride, int *offset)
 {
 #ifdef HAVE_EPOXY_EGL_H
+   if (!egl)
+      return -1;
+
    return virgl_egl_get_fd_for_texture2(egl, tex_id, fd, stride, offset);
 #else
    return -1;

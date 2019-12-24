@@ -2,8 +2,21 @@ dnl Process this file with autoconf to create configure.
 
 AC_PREREQ([2.60])
 
-AC_INIT([virglrenderer], [0.7.0],
+AC_INIT([virglrenderer], [0.8.1],
     [virglrenderer-devel@lists.freedesktop.org])
+
+AC_ARG_ENABLE(autotools,
+	      AS_HELP_STRING([--enable-autotools],
+              [Enable the use of the now deprecated autotools build]),
+	      [force_autotools=$enableval])
+
+if test "x$force_autotools" != "xyes"; then
+  AC_MSG_ERROR([The autotools build system is deprecated, please try the
+  new meson build system.
+    > meson <src-dir> [<build-dir>]
+  To force the use of autotools run configure with --enable-autotools])
+fi
+
 AC_CONFIG_SRCDIR([Makefile.am])
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_AUX_DIR([build-aux])
@@ -94,6 +107,10 @@ AC_ARG_ENABLE(tests,
 	      [build_tests="$enableval"],
 	      [build_tests="auto"])
 
+AC_ARG_ENABLE(valgrind,
+	      AS_HELP_STRING([--enable-valgrind], [Run the test suite also in valgind]),
+	      [test_valgrind="$enableval"], [test_valgrind="no"])
+
 AC_ARG_ENABLE([egl], AS_HELP_STRING([--disable-egl], [Disable EGL]))
 AC_ARG_ENABLE([glx], AS_HELP_STRING([--disable-glx], [Disable GLX]))
 
@@ -102,12 +119,22 @@ PKG_CHECK_MODULES(CHECK, [check >= 0.9.4], [HAVE_CHECK="yes"], [HAVE_CHECK="no"]
 if test "x$build_tests" = "xauto" && test "x$os_win32" = "xno"; then
 	build_tests="$HAVE_CHECK"
 fi
+
 if test "x$build_tests" = "xyes"; then
 	if test "x$HAVE_CHECK" = "xno"; then
 		AC_MSG_ERROR([Cannot build tests, check is missing])
 	fi
 
-	AC_PATH_PROG(VALGRIND, [valgrind])
+	if test "x$test_valgrind" = "xyes"; then
+		AC_PATH_PROG(VALGRIND, [valgrind])
+                if test "x$VALGRIND" = "x"; then
+                        enable_valgrind="no"
+                        AC_MSG_ERROR([Cannot run test with valgrind])
+                else
+                        enable_valgrind="yes"
+                fi
+
+	fi
 fi
 
 AC_ARG_ENABLE(fuzzer,
@@ -124,12 +151,19 @@ AM_CONDITIONAL(BUILD_TESTS, [test "x$build_tests" = "xyes"])
 
 LIBDRM_REQUIRED=2.4.50
 
-if test "x$os_win32" = xno && test "x$enable_egl" != "xno"; then
-	PKG_CHECK_MODULES([LIBDRM], [libdrm >= $LIBDRM_REQUIRED])
-	PKG_CHECK_MODULES([GBM], [gbm])
+if test "x$enable_gbm_allocation" = xyes; then
+	LIBGBM_REQUIRED=18.0.0
+else
+	LIBGBM_REQUIRED=0.0.0
 fi
 
-PKG_CHECK_MODULES([EPOXY], [epoxy])
+if test "x$os_win32" = xno && test "x$enable_egl" != "xno"; then
+	PKG_CHECK_MODULES([LIBDRM], [libdrm >= $LIBDRM_REQUIRED])
+	PKG_CHECK_MODULES([GBM], [gbm >= $LIBGBM_REQUIRED])
+fi
+
+LIBEPOXY_REQURED=1.5.4
+PKG_CHECK_MODULES([EPOXY], [epoxy >= $LIBEPOXY_REQURED])
 epoxy_has_egl=`$PKG_CONFIG --variable=epoxy_has_egl epoxy`
 AS_IF([test "x$epoxy_has_egl" = "x1" && test "x$enable_egl" != "xno"], [
   epoxy_has_egl=yes
@@ -144,13 +178,6 @@ if test "x$enable_gbm_allocation" = xyes; then
 		AC_MSG_ERROR([GBM integration requires EGL support])
 	fi
 	AC_DEFINE([ENABLE_GBM_ALLOCATION], [1], [GBM will be used to allocate in some cases])
-fi
-
-if test "x$os_win32" = xno; then
-	AS_IF([test "x$epoxy_has_egl" = "x1"], [
-		PKG_CHECK_MODULES([LIBDRM], [libdrm >= $LIBDRM_REQUIRED])
-		PKG_CHECK_MODULES([GBM], [gbm])
-	])
 fi
 
 epoxy_has_glx=`$PKG_CONFIG --variable=epoxy_has_glx epoxy`
@@ -198,6 +225,7 @@ AC_MSG_NOTICE([
       gbm_allocation:           $enable_gbm_allocation
       debug:                    $enable_debug
       tests:                    $build_tests
+      valgrind:                 $enable_valgrind
       fuzzer:                   $enable_fuzzer
 
 ])

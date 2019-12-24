@@ -1,6 +1,6 @@
 /**************************************************************************
  *
- * Copyright (C) 2016 Red Hat Inc.
+ * Copyright (C) 2019 Chromium.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -20,21 +20,24 @@
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
  *
- **************************************************************************/
+    **************************************************************************/
 
-#ifndef VTEST_UTIL_H
-#define VTEST_UTIL_H
+#include <stdint.h>
+#include <stdbool.h>
 
-int vtest_wait_for_fd_read(int fd);
+#define BIT(n)                   (UINT32_C(1) << (n))
 
-int __failed_call(const char* func, const char *called, int ret);
+static inline bool has_bit(uint32_t mask, uint32_t bit)
+{
+    return !!(mask & bit);
+}
 
-int __failure(const char* func, const char *reason, int ret);
+static inline bool has_bits(uint32_t mask, uint32_t bits)
+{
+    return !!((mask & bits) == bits);
+}
 
-#define report_failure(reason, ret) \
-   __failure(__func__, reason, ret)
-
-#define report_failed_call(called, ret) \
-   __failed_call(__func__, called, ret)
-
-#endif /* VTEST_UTIL_H */
+static inline bool is_only_bit(uint32_t mask, uint32_t bit)
+{
+    return (mask == bit);
+}

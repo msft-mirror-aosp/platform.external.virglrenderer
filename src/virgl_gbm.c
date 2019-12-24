@@ -44,9 +44,14 @@
 
 struct planar_layout {
     size_t num_planes;
-    int horizontal_subsampling[4];
-    int vertical_subsampling[4];
-    int bytes_per_pixel[4];
+    int horizontal_subsampling[VIRGL_GBM_MAX_PLANES];
+    int vertical_subsampling[VIRGL_GBM_MAX_PLANES];
+    int bytes_per_pixel[VIRGL_GBM_MAX_PLANES];
+};
+
+struct format_conversion {
+    uint32_t gbm_format;
+    uint32_t virgl_format;
 };
 
 static const struct planar_layout packed_1bpp_layout = {
@@ -82,6 +87,19 @@ static const struct planar_layout triplanar_yuv_420_layout = {
     .horizontal_subsampling = { 1, 2, 2 },
     .vertical_subsampling = { 1, 2, 2 },
     .bytes_per_pixel = { 1, 1, 1 }
+};
+
+static const struct format_conversion conversions[] = {
+    { GBM_FORMAT_RGB565, VIRGL_FORMAT_B5G6R5_UNORM },
+    { GBM_FORMAT_ARGB8888, VIRGL_FORMAT_B8G8R8A8_UNORM },
+    { GBM_FORMAT_XRGB8888, VIRGL_FORMAT_B8G8R8X8_UNORM },
+    { GBM_FORMAT_NV12, VIRGL_FORMAT_NV12 },
+    { GBM_FORMAT_ABGR8888, VIRGL_FORMAT_R8G8B8A8_UNORM},
+    { GBM_FORMAT_XBGR8888, VIRGL_FORMAT_R8G8B8X8_UNORM},
+    { GBM_FORMAT_R8, VIRGL_FORMAT_R8_UNORM},
+    { GBM_FORMAT_YVU420, VIRGL_FORMAT_YV12},
+    { GBM_FORMAT_ABGR8888, VIRGL_FORMAT_B8G8R8A8_UNORM_EMULATED},
+    { GBM_FORMAT_XBGR8888, VIRGL_FORMAT_B8G8R8X8_UNORM_EMULATED},
 };
 
 static int rendernode_open(void)
@@ -267,35 +285,33 @@ void virgl_gbm_fini(struct virgl_gbm *gbm)
    free(gbm);
 }
 
-uint32_t virgl_gbm_convert_format(uint32_t virgl_format)
+int virgl_gbm_convert_format(uint32_t *virgl_format, uint32_t *gbm_format)
 {
-   switch (virgl_format) {
-   case VIRGL_FORMAT_B5G6R5_UNORM:
-      return GBM_FORMAT_RGB565;
-   case VIRGL_FORMAT_B8G8R8A8_UNORM:
-      return GBM_FORMAT_ARGB8888;
-   case VIRGL_FORMAT_B8G8R8X8_UNORM:
-      return GBM_FORMAT_XRGB8888;
-   case VIRGL_FORMAT_NV12:
-      return GBM_FORMAT_NV12;
-   case VIRGL_FORMAT_R8G8B8A8_UNORM:
-      return GBM_FORMAT_ABGR8888;
-   case VIRGL_FORMAT_R8G8B8X8_UNORM:
-      return GBM_FORMAT_XBGR8888;
-   case VIRGL_FORMAT_R8_UNORM:
-      return GBM_FORMAT_R8;
-   case VIRGL_FORMAT_YV12:
-      return GBM_FORMAT_YVU420;
-   default:
-      return 0;
-   }
+
+    if (!virgl_format || !gbm_format)
+      return -1;
+
+    if (*virgl_format != 0 && *gbm_format != 0)
+      return -1;
+
+    for (uint32_t i = 0; i < ARRAY_SIZE(conversions); i++) {
+      if (conversions[i].gbm_format == *gbm_format ||
+          conversions[i].virgl_format == *virgl_format) {
+         *gbm_format = conversions[i].gbm_format;
+         *virgl_format = conversions[i].virgl_format;
+         return 0;
+      }
+    }
+
+    return -1;
 }
 
+#ifdef ENABLE_GBM_ALLOCATION
 int virgl_gbm_transfer(struct gbm_bo *bo, uint32_t direction, struct iovec *iovecs,
                        uint32_t num_iovecs, const struct vrend_transfer_info *info)
 {
    void *map_data;
-   uint32_t host_plane_offset, guest_plane_offset, guest_stride0, calc_stride0, host_map_stride0;
+   uint32_t guest_plane_offset, guest_stride0, calc_stride0, host_map_stride0;
 
    uint32_t width = gbm_bo_get_width(bo);
    uint32_t height = gbm_bo_get_height(bo);
@@ -305,7 +321,7 @@ int virgl_gbm_transfer(struct gbm_bo *bo, uint32_t direction, struct iovec *iove
    if (!layout)
       return -1;
 
-   host_plane_offset = guest_plane_offset = host_map_stride0 = guest_stride0 = 0;
+   guest_plane_offset = host_map_stride0 = guest_stride0 = 0;
    uint32_t map_flags = (direction == VIRGL_TRANSFER_TO_HOST) ? GBM_BO_TRANSFER_WRITE :
                                                                 GBM_BO_TRANSFER_READ;
    void *addr = gbm_bo_map(bo, 0, 0, width, height, map_flags, &host_map_stride0, &map_data);
@@ -329,15 +345,19 @@ int virgl_gbm_transfer(struct gbm_bo *bo, uint32_t direction, struct iovec *iove
       return -1;
 
    for (int plane = 0; plane < plane_count; plane++) {
-      host_plane_offset += gbm_bo_get_offset(bo, plane);
+      uint32_t host_plane_offset = gbm_bo_get_offset(bo, plane);
 
       uint32_t subsampled_x = info->box->x / layout->horizontal_subsampling[plane];
       uint32_t subsampled_y = info->box->y / layout->vertical_subsampling[plane];
       uint32_t subsampled_width = info->box->width / layout->horizontal_subsampling[plane];
       uint32_t subsampled_height = info->box->height / layout->vertical_subsampling[plane];
       uint32_t plane_height = height / layout->vertical_subsampling[plane];
-      uint32_t guest_plane_stride = guest_stride0 / layout->horizontal_subsampling[plane];
-      uint32_t host_plane_stride = host_map_stride0 / layout->horizontal_subsampling[plane];
+
+      uint32_t plane_byte_ratio = layout->bytes_per_pixel[plane] / layout->bytes_per_pixel[0];
+      uint32_t guest_plane_stride = (guest_stride0 * plane_byte_ratio)
+            / layout->horizontal_subsampling[plane];
+      uint32_t host_plane_stride = plane == 0
+            ? host_map_stride0 : gbm_bo_get_stride_for_plane(bo, plane);
 
       uint32_t guest_resource_offset = guest_plane_offset + (subsampled_y * guest_plane_stride)
                                        + subsampled_x * layout->bytes_per_pixel[plane];
@@ -366,22 +386,26 @@ uint32_t virgl_gbm_convert_flags(uint32_t virgl_bind_flags)
       flags |= GBM_BO_USE_SCANOUT;
    if (virgl_bind_flags & VIRGL_BIND_CURSOR)
       flags |= GBM_BO_USE_CURSOR;
+   if (virgl_bind_flags & VIRGL_BIND_LINEAR)
+      flags |= GBM_BO_USE_LINEAR;
+
    return flags;
 }
+
 
 int virgl_gbm_export_query(struct gbm_bo *bo, struct virgl_renderer_export_query *query)
 {
    int ret = -1;
-   uint32_t handles[4] = {0, 0, 0, 0};
+   uint32_t handles[VIRGL_GBM_MAX_PLANES] = { 0 };
    struct gbm_device *gbm = gbm_bo_get_device(bo);
    int num_planes = gbm_bo_get_plane_count(bo);
-   if (num_planes < 0 || num_planes > 4)
+   if (num_planes < 0 || num_planes > VIRGL_GBM_MAX_PLANES)
       return ret;
 
    query->out_num_fds = 0;
    query->out_fourcc = 0;
    query->out_modifier = 0;
-   for (int plane = 0; plane < 4; plane++) {
+   for (int plane = 0; plane < VIRGL_GBM_MAX_PLANES; plane++) {
       query->out_fds[plane] = -1;
       query->out_strides[plane] = 0;
       query->out_offsets[plane] = 0;
@@ -394,17 +418,17 @@ int virgl_gbm_export_query(struct gbm_bo *bo, struct virgl_renderer_export_query
       handle = gbm_bo_get_handle_for_plane(bo, plane).u32;
 
       for (i = 0; i < query->out_num_fds; i++) {
-         if (handles[query->out_num_fds] == handle)
+         if (handles[i] == handle)
             break;
       }
 
       if (i == query->out_num_fds) {
          if (query->in_export_fds) {
-            ret = drmPrimeHandleToFD(gbm_device_get_fd(gbm), handle, DRM_CLOEXEC,
-                                     &query->out_fds[query->out_num_fds]);
+            ret = virgl_gbm_export_fd(gbm, handle, &query->out_fds[query->out_num_fds]);
             if (ret)
                goto err_close;
          }
+         handles[query->out_num_fds] = handle;
          query->out_num_fds++;
       }
    }
@@ -414,7 +438,7 @@ int virgl_gbm_export_query(struct gbm_bo *bo, struct virgl_renderer_export_query
    return 0;
 
 err_close:
-   for (int plane = 0; plane < 4; plane++) {
+   for (int plane = 0; plane < VIRGL_GBM_MAX_PLANES; plane++) {
       if (query->out_fds[plane] >= 0) {
          close(query->out_fds[plane]);
          query->out_fds[plane] = -1;
@@ -426,4 +450,50 @@ err_close:
 
    query->out_num_fds = 0;
    return ret;
+}
+#endif
+
+int virgl_gbm_export_fd(struct gbm_device *gbm, uint32_t handle, int32_t *out_fd)
+{
+   int ret;
+   ret = drmPrimeHandleToFD(gbm_device_get_fd(gbm), handle, DRM_CLOEXEC | DRM_RDWR, out_fd);
+   // Kernels with older DRM core versions block DRM_RDWR but give a
+   // read/write mapping anyway.
+   if (ret)
+      ret = drmPrimeHandleToFD(gbm_device_get_fd(gbm), handle, DRM_CLOEXEC, out_fd);
+
+   return ret;
+}
+
+int virgl_gbm_get_plane_width(struct gbm_bo *bo, int plane) {
+   uint32_t format = gbm_bo_get_format(bo);
+   const struct planar_layout *layout = layout_from_format(format);
+   if (!layout)
+      return -1;
+   return gbm_bo_get_width(bo) / layout->horizontal_subsampling[plane];
+}
+
+int virgl_gbm_get_plane_height(struct gbm_bo *bo, int plane) {
+   uint32_t format = gbm_bo_get_format(bo);
+   const struct planar_layout *layout = layout_from_format(format);
+   if (!layout)
+      return -1;
+   return gbm_bo_get_height(bo) / layout->vertical_subsampling[plane];
+}
+
+int virgl_gbm_get_plane_bytes_per_pixel(struct gbm_bo *bo, int plane) {
+   uint32_t format = gbm_bo_get_format(bo);
+   const struct planar_layout *layout = layout_from_format(format);
+   if (!layout)
+      return -1;
+   return layout->bytes_per_pixel[plane];
+}
+
+bool virgl_gbm_external_allocation_preferred(uint32_t flags) {
+   return (flags & (VIRGL_RES_BIND_SCANOUT | VIRGL_RES_BIND_SHARED)) != 0;
+}
+
+bool virgl_gbm_gpu_import_required(uint32_t flags) {
+   return !virgl_gbm_external_allocation_preferred(flags) ||
+          (flags & (VIRGL_BIND_RENDER_TARGET | VIRGL_BIND_SAMPLER_VIEW)) != 0;
 }

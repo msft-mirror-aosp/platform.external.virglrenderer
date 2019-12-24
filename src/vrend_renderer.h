@@ -31,6 +31,7 @@
 #include "vrend_debug.h"
 #include "vrend_tweaks.h"
 #include "vrend_iov.h"
+#include "virgl_gbm.h"
 #include "virgl_hw.h"
 #include <epoxy/gl.h>
 
@@ -50,21 +51,34 @@ struct vrend_context;
  */
 #define VR_MAX_TEXTURE_2D_LEVELS 15
 
-enum vrend_resource_storage_type {
-   VREND_RESOURCE_STORAGE_TEXTURE,
-   VREND_RESOURCE_STORAGE_BUFFER,
-   /* The resource contents are stored in shared guest memory. */
-   VREND_RESOURCE_STORAGE_GUEST,
-   /* The resource contents are stored in shared guest memory if it's
-    * attached, otherwise in host system memory. */
-   VREND_RESOURCE_STORAGE_GUEST_ELSE_SYSTEM,
+#define VREND_STORAGE_GUEST_MEMORY       BIT(0)
+#define VREND_STORAGE_GL_TEXTURE         BIT(1)
+#define VREND_STORAGE_GL_BUFFER          BIT(2)
+#define VREND_STORAGE_EGL_IMAGE          BIT(3)
+#define VREND_STORAGE_GBM_BUFFER         BIT(4)
+#define VREND_STORAGE_HOST_SYSTEM_MEMORY BIT(5)
+#define VREND_STORAGE_GL_IMMUTABLE       BIT(6)
+
+enum {
+   CONTEXT_NONE,
+   CONTEXT_EGL,
+   CONTEXT_GLX
 };
+
+extern int use_context;
+#ifdef HAVE_EPOXY_EGL_H
+extern struct virgl_egl *egl;
+extern struct virgl_gbm *gbm;
+#endif
+
 
 struct vrend_resource {
    struct pipe_resource base;
+   uint32_t storage_bits;
+
    GLuint id;
    GLenum target;
-   enum vrend_resource_storage_type storage;
+
    /* fb id if we need to readback this resource */
    GLuint readback_fb_id;
    GLuint readback_fb_level;
@@ -85,6 +99,7 @@ struct vrend_resource {
    uint32_t num_iovs;
    uint64_t mipmap_offsets[VR_MAX_TEXTURE_2D_LEVELS];
    void *gbm_bo, *egl_image;
+   void *aux_plane_egl_image[VIRGL_GBM_MAX_PLANES - 1];
 };
 
 #define VIRGL_TEXTURE_NEED_SWIZZLE        (1 << 0)
@@ -417,7 +432,7 @@ void vrend_fb_bind_texture(struct vrend_resource *res,
                            int idx,
                            uint32_t level, uint32_t layer);
 bool vrend_format_is_emulated_alpha(enum virgl_formats format);
-boolean format_is_copy_compatible(enum pipe_format src, enum pipe_format dst,
+boolean format_is_copy_compatible(enum virgl_formats src, enum virgl_formats dst,
                                   boolean allow_compressed);
 
 /* blitter interface */

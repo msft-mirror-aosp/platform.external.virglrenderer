@@ -75,6 +75,9 @@
 #define SHADER_REQ_CONSERVATIVE_DEPTH  (1 << 30)
 #define SHADER_REQ_SAMPLER_BUF        (1 << 31)
 
+#define FRONT_COLOR_EMITTED (1 << 0)
+#define BACK_COLOR_EMITTED  (1 << 1);
+
 struct vrend_shader_io {
    unsigned                name;
    unsigned                gpr;
@@ -158,6 +161,7 @@ struct dump_ctx {
    struct vrend_shader_io inputs[64];
    uint32_t num_outputs;
    struct vrend_shader_io outputs[64];
+   uint8_t front_back_color_emitted_flags[64];
    uint32_t num_system_values;
    struct vrend_shader_io system_values[32];
 
@@ -243,6 +247,8 @@ struct dump_ctx {
    bool has_sample_input;
    bool early_depth_stencil;
    bool has_file_memory;
+   bool force_color_two_side;
+   bool winsys_adjust_y_emitted;
 
    int tcs_vertices_out;
    int tes_prim_mode;
@@ -1782,6 +1788,7 @@ static const struct vrend_shader_io *get_io_slot(const struct vrend_shader_io *s
          return result;
    }
    assert(0 && "Output not found");
+   return NULL;
 }
 
 static inline void
@@ -2738,7 +2745,7 @@ create_swizzled_clipdist(struct dump_ctx *ctx,
                          const char *prefix,
                          const char *arrayname, int offset)
 {
-   char clipdistvec[4][64] = {};
+   char clipdistvec[4][64] = { 0, };
 
    char clip_indirect[32] = "";
 
@@ -4103,7 +4110,11 @@ get_source_info(struct dump_ctx *ctx,
                } else if (ctx->system_values[j].name == TGSI_SEMANTIC_GRID_SIZE ||
                           ctx->system_values[j].name == TGSI_SEMANTIC_THREAD_ID ||
                           ctx->system_values[j].name == TGSI_SEMANTIC_BLOCK_ID) {
-                  strbuf_fmt(src_buf, "uvec4(%s.%c, %s.%c, %s.%c, %s.%c)",
+                  enum vrend_type_qualifier mov_conv = TYPE_CONVERSION_NONE;
+                  if (inst->Instruction.Opcode == TGSI_OPCODE_MOV &&
+                      inst->Dst[0].Register.File == TGSI_FILE_TEMPORARY)
+                    mov_conv = UINT_BITS_TO_FLOAT;
+                  strbuf_fmt(src_buf, "%s(uvec4(%s.%c, %s.%c, %s.%c, %s.%c))", get_string(mov_conv),
                              ctx->system_values[j].glsl_name, get_swiz_char(src->Register.SwizzleX),
                              ctx->system_values[j].glsl_name, get_swiz_char(src->Register.SwizzleY),
                              ctx->system_values[j].glsl_name, get_swiz_char(src->Register.SwizzleZ),
@@ -4649,8 +4660,10 @@ iter_instruction(struct tgsi_iterate_context *iter,
        * GLSL < 4.30 it is required to match the output of the previous stage */
       if (!ctx->cfg->use_gles) {
          for (unsigned i = 0; i < ctx->num_inputs; ++i) {
-            if (ctx->key->force_invariant_inputs & (1ull << i))
+            if (ctx->key->force_invariant_inputs & (1ull << ctx->inputs[i].sid))
                ctx->inputs[i].invariant = 1;
+            else
+               ctx->inputs[i].invariant = 0;
          }
       }
    }
@@ -5797,8 +5810,11 @@ static void emit_ios_indirect_generics_input(struct dump_ctx *ctx, const char *p
    if (ctx->generic_input_range.used) {
       int size = ctx->generic_input_range.io.last - ctx->generic_input_range.io.sid + 1;
       assert(size < 256 && size >= 0);
-      if (size < ctx->key->num_indirect_generic_inputs)
-         ctx->key->num_indirect_generic_inputs = (unsigned char)size;  // This is wrong but needed for debugging
+      if (size < ctx->key->num_indirect_generic_inputs) {
+         VREND_DEBUG(dbg_shader, NULL, "WARNING: shader key indicates less indirect inputs"
+                                       " (%d) then are actually used (%d)\n",
+                     ctx->key->num_indirect_generic_inputs, size);
+      }
 
       if (prefer_generic_io_block(ctx, io_in)) {
 
@@ -5846,10 +5862,10 @@ emit_ios_generic(struct dump_ctx *ctx, enum io_type iot,  const char *prefix,
    if (io->first == io->last) {
       emit_hdr(ctx, layout);
       /* ugly leave spaces to patch interp in later */
-      emit_hdrf(ctx, "%s%s%s  %s %s %s%s;\n",
+      emit_hdrf(ctx, "%s%s\n%s  %s %s %s%s;\n",
+                io->precise ? "precise" : "",
+                io->invariant ? "invariant" : "",
                 prefix,
-                io->precise ? "precise " : "",
-                io->invariant ? "invariant " : "",
                 inout,
                 t,
                 io->glsl_name,
@@ -5875,20 +5891,20 @@ emit_ios_generic(struct dump_ctx *ctx, enum io_type iot,  const char *prefix,
 
          emit_hdrf(ctx, "%s %s {\n", inout, blockname);
          emit_hdr(ctx, layout);
-         emit_hdrf(ctx, "%s%s%s     %s %s[%d]; \n} %s;\n",
+         emit_hdrf(ctx, "%s%s\n%s     %s %s[%d]; \n} %s;\n",
+                   io->precise ? "precise" : "",
+                   io->invariant ? "invariant" : "",
                    prefix,
-                   io->precise ? "precise " : "",
-                   io->invariant ? "invariant " : "",
                    t,
                    io->glsl_name,
                    io->last - io->first +1,
                    blockvarame);
       } else {
          emit_hdr(ctx, layout);
-         emit_hdrf(ctx, "%s%s%s       %s %s %s%s[%d];\n",
+         emit_hdrf(ctx, "%s%s\n%s       %s %s %s%s[%d];\n",
+                   io->precise ? "precise" : "",
+                   io->invariant ? "invariant" : "",
                    prefix,
-                   io->precise ? "precise " : "",
-                   io->invariant ? "invariant " : "",
                    inout,
                    t,
                    io->glsl_name,
@@ -5906,6 +5922,8 @@ emit_ios_generic_outputs(struct dump_ctx *ctx,
                          const can_emit_generic_callback can_emit_generic)
 {
    uint32_t i;
+   uint64_t fc_emitted = 0;
+   uint64_t bc_emitted = 0;
 
    for (i = 0; i < ctx->num_outputs; i++) {
 
@@ -5923,6 +5941,16 @@ emit_ios_generic_outputs(struct dump_ctx *ctx,
             prefix = INTERP_PREFIX;
          }
 
+         if (ctx->outputs[i].name == TGSI_SEMANTIC_COLOR) {
+            ctx->front_back_color_emitted_flags[ctx->outputs[i].sid] |= FRONT_COLOR_EMITTED;
+            fc_emitted |= 1ull << ctx->outputs[i].sid;
+         }
+
+         if (ctx->outputs[i].name == TGSI_SEMANTIC_BCOLOR) {
+            ctx->front_back_color_emitted_flags[ctx->outputs[i].sid] |= BACK_COLOR_EMITTED;
+            bc_emitted |= 1ull << ctx->outputs[i].sid;
+         }
+
          emit_ios_generic(ctx, io_out, prefix, &ctx->outputs[i],
                           ctx->outputs[i].fbfetch_used ? "inout" : "out", "");
       } else if (ctx->outputs[i].invariant || ctx->outputs[i].precise) {
@@ -5932,6 +5960,12 @@ emit_ios_generic_outputs(struct dump_ctx *ctx,
                    ctx->outputs[i].glsl_name);
       }
    }
+
+   /* If a back color emitted without a corresponding front color, then
+    * we have to force two side coloring, because the FS shader might expect
+    * a front color too. */
+   if (bc_emitted & ~fc_emitted)
+      ctx->force_color_two_side = 1;
 }
 
 static void
@@ -5984,7 +6018,9 @@ static void emit_ios_vs(struct dump_ctx *ctx)
 
    emit_ios_indirect_generics_output(ctx, "");
 
-   if (ctx->key->color_two_side) {
+   emit_ios_generic_outputs(ctx, can_emit_generic_default);
+
+   if (ctx->key->color_two_side || ctx->force_color_two_side) {
       bool fcolor_emitted, bcolor_emitted;
 
       for (i = 0; i < ctx->num_outputs; i++) {
@@ -5993,19 +6029,19 @@ static void emit_ios_vs(struct dump_ctx *ctx)
 
          fcolor_emitted = bcolor_emitted = false;
 
-         if (ctx->outputs[i].name == TGSI_SEMANTIC_COLOR)
-            fcolor_emitted = true;
-         if (ctx->outputs[i].name == TGSI_SEMANTIC_BCOLOR)
-            bcolor_emitted = true;
+         fcolor_emitted = ctx->front_back_color_emitted_flags[ctx->outputs[i].sid] & FRONT_COLOR_EMITTED;
+         bcolor_emitted = ctx->front_back_color_emitted_flags[ctx->outputs[i].sid] & BACK_COLOR_EMITTED;
 
-         if (fcolor_emitted && !bcolor_emitted)
+         if (fcolor_emitted && !bcolor_emitted) {
             emit_hdrf(ctx, "%sout vec4 ex_bc%d;\n", INTERP_PREFIX, ctx->outputs[i].sid);
-         if (bcolor_emitted && !fcolor_emitted)
+            ctx->front_back_color_emitted_flags[ctx->outputs[i].sid] |= BACK_COLOR_EMITTED;
+         }
+         if (bcolor_emitted && !fcolor_emitted) {
             emit_hdrf(ctx, "%sout vec4 ex_c%d;\n", INTERP_PREFIX, ctx->outputs[i].sid);
+            ctx->front_back_color_emitted_flags[ctx->outputs[i].sid] |= FRONT_COLOR_EMITTED;
+         }
       }
    }
-
-   emit_ios_generic_outputs(ctx, can_emit_generic_default);
 
    emit_winsys_correction(ctx);
 
@@ -6094,9 +6130,9 @@ static void emit_ios_fs(struct dump_ctx *ctx)
          emit_ios_generic(ctx, io_in, prefixes, &ctx->inputs[i], "in", "");
       }
 
-      if (ctx->cfg->use_gles && !ctx->key->winsys_adjust_y_emitted &&
+      if (ctx->cfg->use_gles && !ctx->winsys_adjust_y_emitted &&
           (ctx->key->coord_replace & (1 << ctx->inputs[i].sid))) {
-         ctx->key->winsys_adjust_y_emitted = true;
+         ctx->winsys_adjust_y_emitted = true;
          emit_hdr(ctx, "uniform float winsys_adjust_y;\n");
       }
    }
@@ -6580,7 +6616,7 @@ static void fill_sinfo(struct dump_ctx *ctx, struct vrend_shader_info *sinfo)
 
    for (unsigned i = 0; i < ctx->num_outputs; ++i) {
       if (ctx->outputs[i].invariant)
-         sinfo->invariant_outputs |= 1ull << i;
+         sinfo->invariant_outputs |= 1ull << ctx->outputs[i].sid;
    }
 }
 
@@ -6601,7 +6637,7 @@ static bool allocate_strbuffers(struct dump_ctx* ctx)
    return true;
 }
 
-static void set_strbuffers(struct vrend_context *rctx, struct dump_ctx* ctx,
+static void set_strbuffers(MAYBE_UNUSED struct vrend_context *rctx, struct dump_ctx* ctx,
                            struct vrend_strarray *shader)
 {
    strarray_addstrbuf(shader, &ctx->glsl_ver_ext);
@@ -6752,7 +6788,7 @@ static void require_gpu_shader5_and_msinterp(struct vrend_strarray *program)
    strbuf_append(&program->strings[SHADER_STRING_VER_EXT], gpu_shader5_and_msinterp_string);
 }
 
-bool vrend_patch_vertex_shader_interpolants(struct vrend_context *rctx,
+bool vrend_patch_vertex_shader_interpolants(MAYBE_UNUSED struct vrend_context *rctx,
                                             struct vrend_shader_cfg *cfg,
                                             struct vrend_strarray *prog_strings,
                                             struct vrend_shader_info *vs_info,

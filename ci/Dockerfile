@@ -1,4 +1,4 @@
-FROM debian:testing-slim
+FROM debian:buster-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV GOPATH=/usr/local/go
@@ -6,8 +6,8 @@ ENV PATH=$PATH:/usr/local/go/bin
 ENV LD_LIBRARY_PATH=/usr/local/lib64:/usr/local/lib:/usr/local/lib/x86_64-linux-gnu
 ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:/usr/local/share/pkgconfig:/usr/local/lib/x86_64-linux-gnu/pkgconfig
 ENV LDFLAGS="-L/usr/local/lib64 -L/usr/local/lib/ -L/usr/local/lib/x86_64-linux-gnu"
-ENV CC="gcc-9"
-ENV CXX="g++-9"
+ENV CC="gcc-8"
+ENV CXX="g++-8"
 ENV CFLAGS="-g3"
 ENV CXXFLAGS="-g3"
 ENV GIT_DATE="`date +%Y-%m-%d -d \"15 months ago\"`"
@@ -20,7 +20,8 @@ RUN echo '#!/bin/sh' > /usr/sbin/policy-rc.d
 RUN echo 'exit 101' >> /usr/sbin/policy-rc.d
 RUN chmod +x /usr/sbin/policy-rc.d
 
-RUN echo deb-src http://deb.debian.org/debian testing main >> /etc/apt/sources.list
+RUN echo deb-src http://deb.debian.org/debian buster main >> /etc/apt/sources.list
+RUN echo deb http://deb.debian.org/debian buster-backports main >> /etc/apt/sources.list
 RUN apt-get update && \
     apt-get -y install ca-certificates && \
     apt-get -y install --no-install-recommends \
@@ -31,11 +32,10 @@ RUN apt-get update && \
       clang-8 \
       cmake \
       dbus \
-      libepoxy-dev \
-      g++-9 \
-      gcc-9 \
+      g++-8 \
+      gcc-8 \
       gdb \
-      gdc-9 \
+      gdc-8 \
       git \
       golang-go \
       kbd \
@@ -50,6 +50,7 @@ RUN apt-get update && \
       libwayland-egl-backend-dev \
       linux-image-amd64 \
       lld-8 \
+      llvm-8-dev \
       mesa-utils \
       nasm \
       ninja-build \
@@ -76,6 +77,7 @@ RUN apt-get update && \
       xvfb \
       zlib1g-dev && \
     apt-get -y build-dep --no-install-recommends \
+      libepoxy-dev \
       libdrm \
       mesa \
       piglit \
@@ -89,40 +91,11 @@ ARG KNOWN_GOOD_FAKEMACHINE=c4752ddf3343
 RUN go get -v github.com/tomeuv/fakemachine/cmd/fakemachine
 RUN go install -x github.com/tomeuv/fakemachine/cmd/fakemachine
 
-# To avoid this error:
-# error: RPC failed; curl 56 GnuTLS recv error (-54): Error in the pull function.
-RUN git config --global http.postBuffer 1048576000
-
-ARG KNOWN_GOOD_CTS=6c709dc9a99b70572aceb0f7698ab044383ff948
-WORKDIR /VK-GL-CTS
-RUN git clone --shallow-since="$GIT_DATE" https://github.com/KhronosGroup/VK-GL-CTS.git . && \
-    git checkout ${KNOWN_GOOD_CTS} && \
-    git log --oneline -n 1 && \
-    python3 external/fetch_sources.py && \
-    mkdir -p build && \
-    cd build && \
-    cmake -DDEQP_TARGET=x11_egl_glx -DCMAKE_BUILD_TYPE=Release .. && \
-    make -j$(nproc) && \
-    find . -name CMakeFiles | xargs rm -rf && \
-    find . -name lib\*.a | xargs rm -rf
-WORKDIR /
-
-ARG KNOWN_GOOD_PIGLIT=1a2f49f17fb45
-WORKDIR /piglit
-RUN git clone --shallow-since="$GIT_DATE" https://gitlab.freedesktop.org/mesa/piglit.git . && \
-    git checkout ${KNOWN_GOOD_PIGLIT} && \
-    git log --oneline -n 1 && \
-    cmake -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_BUILD_TYPE=Release . && \
-    make -j$(nproc) install && \
-    rm -rf /usr/local/lib/piglit/generated_tests/spec/arb_vertex_attrib_64bit && \
-    rm -rf /usr/local/lib/piglit/generated_tests/spec/glsl-4.20 && \
-    rm -rf /piglit
-WORKDIR /
-
+ENV BATTERY_VERSION=0.1.23
 WORKDIR /battery
-RUN wget https://github.com/VoltLang/Battery/releases/download/v0.1.21/battery-0.1.21-x86_64-linux.tar.gz && \
-    tar xzvf battery-0.1.21-x86_64-linux.tar.gz && \
-    rm battery-0.1.21-x86_64-linux.tar.gz && \
+RUN wget "https://github.com/VoltLang/Battery/releases/download/v${BATTERY_VERSION}/battery-${BATTERY_VERSION}-x86_64-linux.tar.gz" && \
+    tar xzvf battery-${BATTERY_VERSION}-x86_64-linux.tar.gz && \
+    rm battery-${BATTERY_VERSION}-x86_64-linux.tar.gz && \
     mv battery /usr/local/bin
 WORKDIR /
 
@@ -138,7 +111,52 @@ RUN git clone --depth=1 https://github.com/VoltLang/Watt.git && \
     rm -rf /volt
 WORKDIR /
 
-ARG KNOWN_GOOD_DRM=libdrm-2.4.99
+# To avoid this error:
+# error: RPC failed; curl 56 GnuTLS recv error (-54): Error in the pull function.
+RUN git config --global http.postBuffer 1048576000
+
+ARG KNOWN_GOOD_CTS
+ENV KNOWN_GOOD_CTS ${KNOWN_GOOD_CTS:-6c709dc9a99b70572aceb0f7698ab044383ff948}
+WORKDIR /VK-GL-CTS
+RUN git clone --shallow-since="$GIT_DATE" https://github.com/KhronosGroup/VK-GL-CTS.git . && \
+    git checkout ${KNOWN_GOOD_CTS} && \
+    git log --oneline -n 1 && \
+    python3 external/fetch_sources.py && \
+    mkdir -p build && \
+    cd build && \
+    cmake -DDEQP_TARGET=x11_egl_glx -DCMAKE_BUILD_TYPE=Release .. && \
+    make -j$(nproc) && \
+    find . -name CMakeFiles | xargs rm -rf && \
+    find . -name lib\*.a | xargs rm -rf
+WORKDIR /
+
+ARG KNOWN_GOOD_PIGLIT
+ENV KNOWN_GOOD_PIGLIT ${KNOWN_GOOD_PIGLIT:-603cfb97542a411e8957a0d689d8b28cf8b9ef4d}
+WORKDIR /piglit
+RUN git clone --shallow-since="$GIT_DATE" https://gitlab.freedesktop.org/mesa/piglit.git . && \
+    git checkout ${KNOWN_GOOD_PIGLIT} && \
+    git log --oneline -n 1 && \
+    cmake -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_BUILD_TYPE=Release . && \
+    make -j$(nproc) install >/dev/null && \
+    rm -rf /usr/local/lib/piglit/generated_tests/spec/arb_vertex_attrib_64bit && \
+    rm -rf /usr/local/lib/piglit/generated_tests/spec/glsl-4.20 && \
+    rm -rf /piglit
+WORKDIR /
+
+ARG KNOWN_GOOD_EPOXY
+ENV KNOWN_GOOD_EPOXY ${KNOWN_GOOD_EPOXY:-5d818164dd2ab87b0054641f1446bc552a602320}
+WORKDIR /epoxy
+RUN git clone --shallow-since="$GIT_DATE" https://github.com/anholt/libepoxy.git . && \
+    git checkout ${KNOWN_GOOD_EPOXY} && \
+    git log --oneline -n 1 && \
+    mkdir -p build && \
+    meson build/ && \
+    meson configure build/ -Dprefix=/usr/local -Dlibdir=lib && \
+    ninja -C build/ install >/dev/null && \
+    rm -rf /epoxy
+WORKDIR /
+
+ARG KNOWN_GOOD_DRM=libdrm-2.4.100
 WORKDIR /drm
 RUN git clone --shallow-since="$GIT_DATE" https://gitlab.freedesktop.org/mesa/drm.git . && \
     git checkout ${KNOWN_GOOD_DRM} && \
@@ -146,12 +164,12 @@ RUN git clone --shallow-since="$GIT_DATE" https://gitlab.freedesktop.org/mesa/dr
     mkdir -p build && \
     meson build/ && \
     meson configure build/ -Dprefix=/usr/local -Dlibdir=lib && \
-    ninja -C build/ install && \
+    ninja -C build/ install >/dev/null && \
     rm -rf /drm
 WORKDIR /
 
 ARG KNOWN_GOOD_MESA
-ENV KNOWN_GOOD_MESA ${KNOWN_GOOD_MESA:-45951452aa2b2527e13192208cc7f3520bb54478}
+ENV KNOWN_GOOD_MESA ${KNOWN_GOOD_MESA:-2c5eb1df681e28c23e24219eab803b6d4da5aa38}
 RUN echo $KNOWN_GOOD_MESA
 ARG MESA_REPO
 ENV MESA_REPO ${MESA_REPO:-https://gitlab.freedesktop.org/mesa/mesa.git}
@@ -163,7 +181,7 @@ RUN git clone --shallow-since="$GIT_DATE" ${MESA_REPO} . && \
     mkdir -p build && \
     meson build/ && \
     meson configure build/ -Dprefix=/usr/local -Dplatforms=drm,x11,wayland,surfaceless -Ddri-drivers=i965 -Dgallium-drivers=swrast,virgl,radeonsi -Dbuildtype=debugoptimized -Dllvm=true -Dglx=dri -Dgallium-vdpau=false -Dgallium-va=false -Dvulkan-drivers=[] -Dlibdir=lib && \
-    ninja -C build/ install && \
+    ninja -C build/ install >/dev/null && \
     rm -rf /mesa
 WORKDIR /
 

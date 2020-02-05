@@ -67,9 +67,6 @@ extern struct virgl_gbm *gbm;
 extern struct virgl_egl *egl;
 #endif
 
-/* debugging via KHR_debug extension */
-int vrend_use_debug_cb = 0;
-
 int use_context = CONTEXT_NONE;
 
 static const uint32_t fake_occlusion_query_samples_passed_default = 1024;
@@ -1702,6 +1699,13 @@ static void vrend_destroy_streamout_object(struct vrend_streamout_object *obj)
    if (has_feature(feat_transform_feedback2))
       glDeleteTransformFeedbacks(1, &obj->id);
    FREE(obj);
+}
+
+void vrend_sync_make_current(virgl_gl_context gl_cxt) {
+   GLsync sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+   vrend_clicbs->make_current(gl_cxt);
+   glWaitSync(sync, 0, GL_TIMEOUT_IGNORED);
+   glDeleteSync(sync);
 }
 
 int vrend_create_surface(struct vrend_context *ctx,
@@ -4604,6 +4608,13 @@ void vrend_launch_grid(struct vrend_context *ctx,
       }
       ctx->sub->shader_dirty = true;
    }
+
+   if (!ctx->sub->prog) {
+      vrend_printf("%s: Skipping compute shader execution due to missing shaders: %s\n",
+                   __func__, ctx->debug_name);
+      return;
+   }
+
    vrend_use_program(ctx, ctx->sub->prog->id);
 
    vrend_draw_bind_ubo_shader(ctx, PIPE_SHADER_COMPUTE, 0);
@@ -4831,7 +4842,9 @@ static void vrend_hw_emit_blend(struct vrend_context *ctx, struct pipe_blend_sta
       else
          glDisable(GL_BLEND);
 
-      if (state->rt[0].colormask != ctx->sub->hw_blend_state.rt[0].colormask) {
+      if (state->rt[0].colormask != ctx->sub->hw_blend_state.rt[0].colormask ||
+          (ctx->sub->hw_blend_state.independent_blend_enable &&
+           !state->independent_blend_enable)) {
          int i;
          for (i = 0; i < PIPE_MAX_COLOR_BUFS; i++)
             ctx->sub->hw_blend_state.rt[i].colormask = state->rt[i].colormask;
@@ -5752,7 +5765,7 @@ int vrend_renderer_init(struct vrend_if_cbs *cbs, uint32_t flags)
    gl_ver = epoxy_gl_version();
 
    /* enable error output as early as possible */
-   if (vrend_use_debug_cb && epoxy_has_gl_extension("GL_KHR_debug")) {
+   if (vrend_debug(NULL, dbg_khr) && epoxy_has_gl_extension("GL_KHR_debug")) {
       glDebugMessageCallback(vrend_debug_cb, NULL);
       glEnable(GL_DEBUG_OUTPUT);
       glDisable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
@@ -5866,6 +5879,8 @@ static void vrend_destroy_sub_context(struct vrend_sub_context *sub)
    int i, j;
    struct vrend_streamout_object *obj, *tmp;
 
+   vrend_clicbs->make_current(sub->gl_context);
+
    if (sub->fb_id)
       glDeleteFramebuffers(1, &sub->fb_id);
 
@@ -5961,9 +5976,10 @@ bool vrend_destroy_context(struct vrend_context *ctx)
 
    vrend_set_index_buffer(ctx, 0, 0, 0);
 
-   vrend_renderer_force_ctx_0();
    LIST_FOR_EACH_ENTRY_SAFE(sub, tmp, &ctx->sub_ctxs, head)
       vrend_destroy_sub_context(sub);
+   if(ctx->ctx_id)
+      vrend_renderer_force_ctx_0();
 
    vrend_object_fini_ctx_table(ctx->res_hash);
 
@@ -6455,11 +6471,11 @@ static int vrend_renderer_resource_allocate_texture(struct vrend_resource *gr,
           has_feature(feat_egl_image_storage)) {
          glEGLImageTargetTexStorageEXT(gr->target, (GLeglImageOES) image_oes, NULL);
       } else if (has_feature(feat_egl_image_external)) {
+         gr->storage_bits &= ~VREND_STORAGE_GL_IMMUTABLE;
          glEGLImageTargetTexture2DOES(gr->target, (GLeglImageOES) image_oes);
       } else {
          vrend_printf( "missing GL_OES_EGL_image_external extensions\n");
          glBindTexture(gr->target, 0);
-         FREE(gr);
          return EINVAL;
       }
    } else {
@@ -6470,7 +6486,6 @@ static int vrend_renderer_resource_allocate_texture(struct vrend_resource *gr,
       if (internalformat == 0) {
          vrend_printf("unknown format is %d\n", pr->format);
          glBindTexture(gr->target, 0);
-         FREE(gt);
          return EINVAL;
       }
 
@@ -7377,6 +7392,10 @@ static int vrend_transfer_send_readpixels(struct vrend_resource *res,
    if (actually_invert && !has_feature(feat_mesa_invert))
       separate_invert = true;
 
+#ifdef PIPE_ARCH_BIG_ENDIAN
+   glPixelStorei(GL_PACK_SWAP_BYTES, 1);
+#endif
+
    if (num_iovs > 1 || separate_invert)
       need_temp = 1;
 
@@ -7491,6 +7510,11 @@ static int vrend_transfer_send_readpixels(struct vrend_resource *res,
    if (!need_temp && row_stride)
       glPixelStorei(GL_PACK_ROW_LENGTH, 0);
    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+
+#ifdef PIPE_ARCH_BIG_ENDIAN
+   glPixelStorei(GL_PACK_SWAP_BYTES, 0);
+#endif
+
    if (need_temp) {
       write_transfer_data(&res->base, iov, num_iovs, data,
                           info->stride, info->box, info->level, info->offset,
@@ -7612,12 +7636,13 @@ int vrend_renderer_transfer_iov(const struct vrend_transfer_info *info,
       return EINVAL;
    }
 
+   void* fence = NULL;
 #ifdef HAVE_EPOXY_EGL_H
    // Some platforms require extra synchronization before transferring.
    if (transfer_mode == VIRGL_TRANSFER_FROM_HOST) {
       if (virgl_egl_need_fence_and_wait_external(egl)) {
          vrend_hw_switch_context(ctx, true);
-         virgl_egl_fence_and_wait_external(egl);
+         fence = virgl_egl_fence(egl);
       }
    }
 #endif
@@ -7654,6 +7679,7 @@ int vrend_renderer_transfer_iov(const struct vrend_transfer_info *info,
 
    if (info->context0) {
       vrend_renderer_force_ctx_0();
+      virgl_egl_wait_fence(egl, fence);
       ctx = NULL;
    }
 
@@ -8276,10 +8302,6 @@ static GLuint vrend_make_view(struct vrend_resource *res, enum virgl_formats for
                util_format_name(format),
                format != dst_fmt ? "(emulated)" : "");
 
-   unsigned layers_factor = 1;
-   if (res->target == GL_TEXTURE_CUBE_MAP || res->target == GL_TEXTURE_CUBE_MAP_ARRAY)
-      layers_factor = 6;
-
    if (vrend_state.use_gles) {
       assert(res->target != GL_TEXTURE_RECTANGLE_NV);
       assert(res->target != GL_TEXTURE_1D);
@@ -8287,7 +8309,7 @@ static GLuint vrend_make_view(struct vrend_resource *res, enum virgl_formats for
    }
 
    glTextureView(view_id, res->target, res->id, fmt, 0, res->base.last_level + 1,
-                 0, layers_factor * res->base.depth0);
+                 0, res->base.array_size);
    return view_id;
 }
 
@@ -8409,7 +8431,7 @@ static void vrend_renderer_blit_int(struct vrend_context *ctx,
                              has_feature(feat_texture_srgb_decode),
                              has_feature(feat_srgb_write_control),
                              skip_dest_swizzle);
-      vrend_clicbs->make_current(ctx->sub->gl_context);
+      vrend_sync_make_current(ctx->sub->gl_context);
       goto cleanup;
    }
 
@@ -10198,9 +10220,9 @@ void vrend_renderer_destroy_sub_ctx(struct vrend_context *ctx, int sub_ctx_id)
    if (tofree) {
       if (ctx->sub == tofree) {
          ctx->sub = ctx->sub0;
-         vrend_clicbs->make_current(ctx->sub->gl_context);
       }
       vrend_destroy_sub_context(tofree);
+      vrend_clicbs->make_current(ctx->sub->gl_context);
    }
 }
 

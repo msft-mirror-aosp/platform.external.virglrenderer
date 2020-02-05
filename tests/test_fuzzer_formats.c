@@ -146,6 +146,28 @@ static void test_format_wrong_size()
    virgl_renderer_submit_cmd((void *) cmd, ctx_id, VIRGL_CMD_BLIT_SIZE + 1);
 }
 
+static void test_format_fail_and_double_free()
+{
+   struct virgl_renderer_resource_create_args args;
+
+   args.handle = 1;
+   args.target = 3;
+   args.format = 191;
+   args.bind = 10;
+   args.width = 49;
+   args.height = 0;
+   args.depth = 0;
+   args.array_size = 0;
+   args.last_level = 0;
+   args.nr_samples = 0;
+   args.flags = 0;
+
+   virgl_renderer_resource_create(&args, NULL, 0);
+   virgl_renderer_ctx_attach_resource(ctx_id, args.handle);
+}
+
+
+
 
 /* Issue #141 */
 static void test_blit_info_format_check()
@@ -654,11 +676,47 @@ static void test_heap_overflow_vrend_renderer_transfer_write_iov_compressed_tex(
    virgl_renderer_submit_cmd((void *) cmd, ctx_id, 11 + 4 + 1);
 }
 
+
+static void test_cs_nullpointer_deference()
+{
+
+   struct virgl_renderer_resource_create_args args;
+   args.handle = 0x6e735f72;
+   args.target = 2;
+   args.format = 0x101;
+   args.bind = 0x19191919;
+   args.width = 0x19191919;
+   args.height = 0x19191919;
+   args.depth = 0x411959;
+   args.array_size = 0;
+   args.last_level = 0x19190000;
+   args.nr_samples = 0;
+   args.flags = 0x31313100;
+
+   virgl_renderer_resource_create(&args, NULL, 0);
+   virgl_renderer_ctx_attach_resource(ctx_id, args.handle);
+
+   uint32_t cmd[9];
+   int i = 0;
+   cmd[i++] = 0x0083925;
+   cmd[i++] = 0x00313131;
+   cmd[i++] = 0;
+   cmd[i++] = 0;
+   cmd[i++] = 0;
+   cmd[i++] = 0x25313131;
+   cmd[i++] = 0x39;
+   cmd[i++] = 0x0001370b;
+   cmd[i++] = 0x00340000;
+
+  virgl_renderer_submit_cmd((void *) cmd, ctx_id, 9);
+}
+
 int main()
 {
    initialize_environment();
 
    test_format_wrong_size();
+   test_format_fail_and_double_free();
    test_blit_info_format_check();
    test_blit_info_format_check_null_format();
    test_format_is_plain_nullptr_deref_trigger();
@@ -671,6 +729,8 @@ int main()
 
    test_heap_overflow_vrend_renderer_transfer_write_iov();
    test_heap_overflow_vrend_renderer_transfer_write_iov_compressed_tex();
+
+   test_cs_nullpointer_deference();
 
    virgl_renderer_context_destroy(ctx_id);
    virgl_renderer_cleanup(&cookie);

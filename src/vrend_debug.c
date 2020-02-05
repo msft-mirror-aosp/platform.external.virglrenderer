@@ -123,6 +123,7 @@ static const struct debug_named_value vrend_debug_options[] = {
    {"gles", dbg_gles, "GLES host specific debug"},
    {"all", dbg_all, "Enable all debugging output"},
    {"guestallow", dbg_allow_guest_override, "Allow the guest to override the debug flags"},
+   {"khr", dbg_khr, "Enable debug via KHR_debug extension"},
    DEBUG_NAMED_VALUE_END
 };
 
@@ -174,7 +175,34 @@ int  vrend_debug_can_override(void)
 static
 void vrend_default_debug_callback(const char *fmt, va_list va)
 {
-   vfprintf(stderr, fmt, va);
+   static FILE* fp = NULL;
+   if (NULL == fp) {
+      const char* log = getenv("VIRGL_LOG_FILE");
+      if (log) {
+         char *log_prefix = strdup(log);
+         char *log_suffix = strstr(log_prefix, "%PID%");
+         if (log_suffix) {
+            *log_suffix = 0;
+            log_suffix += 5;
+            int len = strlen(log) + 32;
+            char *name = malloc(len);
+            snprintf(name, len, "%s%d%s", log_prefix, getpid(), log_suffix);
+            fp = fopen(name, "a");
+            free(name);
+         } else {
+            fp = fopen(log, "a");
+         }
+         free(log_prefix);
+         if (NULL == fp) {
+            fprintf(stderr, "Can't open %s\n", log);
+            fp = stderr;
+         }
+      } else {
+            fp = stderr;
+      }
+   }
+   vfprintf(fp, fmt, va);
+   fflush(fp);
 }
 
 static virgl_debug_callback_type debug_callback = vrend_default_debug_callback;

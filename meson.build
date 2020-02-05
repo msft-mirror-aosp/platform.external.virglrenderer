@@ -60,6 +60,16 @@ foreach w : warnings
    endif
 endforeach
 
+flags = [
+   '-fvisibility=hidden',
+]
+
+foreach f : flags
+   if cc.has_argument(f)
+      add_project_arguments(f, language : 'c')
+   endif
+endforeach
+
 prog_python = import('python').find_installation('python3')
 
 libdrm_dep = dependency('libdrm', version : '>=2.4.50')
@@ -86,9 +96,11 @@ if cc.has_header('sys/eventfd.h')
    conf_data.set('HAVE_EVENTFD_H', 1)
 endif
 
-debug_enabled = get_option('debug')
+if cc.has_header('sys/select.h')
+  conf_data.set('HAVE_SYS_SELECT_H', 1)
+endif
 
-if debug_enabled
+if get_option('buildtype') == 'debug'
    add_global_arguments('-DDEBUG=1', language : 'c')
 endif
 
@@ -113,7 +125,7 @@ else
 endif
 
 if with_egl
-   if cc.has_header('epoxy/egl.h') and epoxy_dep.get_pkgconfig_variable('epoxy_has_egl') == '1'
+   if cc.has_header('epoxy/egl.h', dependencies: epoxy_dep) and epoxy_dep.get_pkgconfig_variable('epoxy_has_egl') == '1'
       gbm_dep = dependency('gbm', version: '>= ' + _gbm_ver, required: require_egl)
       have_egl = gbm_dep.found()
       conf_data.set('HAVE_EPOXY_EGL_H', 1)
@@ -124,7 +136,7 @@ if with_egl
 endif
 
 if with_glx
-   if cc.has_header('epoxy/glx.h') and epoxy_dep.get_pkgconfig_variable('epoxy_has_glx') == '1'
+   if cc.has_header('epoxy/glx.h', dependencies: epoxy_dep) and epoxy_dep.get_pkgconfig_variable('epoxy_has_glx') == '1'
       glx_dep = dependency('x11', required: require_glx)
       have_glx = glx_dep.found()
       conf_data.set('HAVE_EPOXY_GLX_H', 1)
@@ -183,7 +195,6 @@ lines += 'glx:       ' + (have_glx ? 'yes' : 'no')
 lines += ''
 lines += 'gbm_alloc: ' + (with_gbm_allocation ? 'yes' : 'no' )
 lines += ''
-lines += 'debug:     ' + (debug_enabled ? 'yes' : 'no' )
 lines += 'tests:     ' + (with_tests ? 'yes' : 'no' )
 lines += 'fuzzer:    ' + (with_fuzzer ? 'yes' : 'no' )
 

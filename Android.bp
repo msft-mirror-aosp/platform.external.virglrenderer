@@ -81,8 +81,15 @@ cc_library_host_shared {
         "src/vrend_tweaks.c",
     ],
     shared_libs: [
-        "libdrm",
         "libepoxy",
         "libgbm",
     ],
+
+    // Avoid linking to another host copy of libdrm; this library will cause
+    // binary GPU drivers to be loaded from the host, which might be linked
+    // to a system copy of libdrm, which conflicts with the AOSP one
+    header_libs: [
+        "libdrm",
+    ],
+    allow_undefined_symbols: true,
 }

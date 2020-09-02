@@ -20,14 +20,16 @@ cc_library_headers {
   export_include_dirs: ["src"],
 }
 
-cc_library_host_shared {
+cc_library {
     name: "libvirglrenderer",
+    host_supported: true,
     cflags: [
         "-DHAVE_CONFIG_H",
         "-Wno-null-pointer-arithmetic",
         "-Wno-macro-redefined",
         "-Wno-unused-function",
         "-Wno-incompatible-pointer-types-discards-qualifiers",
+        "-Wno-unused-parameter",
     ],
     c_std: "experimental",
     local_include_dirs: [
@@ -54,7 +56,6 @@ cc_library_host_shared {
         "src/gallium/auxiliary/tgsi/tgsi_strings.c",
         "src/gallium/auxiliary/tgsi/tgsi_ureg.c",
         "src/gallium/auxiliary/tgsi/tgsi_util.c",
-        //"src/gallium/auxiliary/util/rgtc.c",
         "src/gallium/auxiliary/util/u_bitmask.c",
         "src/gallium/auxiliary/util/u_cpu_detect.c",
         "src/gallium/auxiliary/util/u_debug.c",
@@ -80,16 +81,27 @@ cc_library_host_shared {
         "src/vrend_shader.c",
         "src/vrend_tweaks.c",
     ],
-    shared_libs: [
-        "libepoxy",
-        "libgbm",
-    ],
-
-    // Avoid linking to another host copy of libdrm; this library will cause
-    // binary GPU drivers to be loaded from the host, which might be linked
-    // to a system copy of libdrm, which conflicts with the AOSP one
-    header_libs: [
-        "libdrm",
-    ],
-    allow_undefined_symbols: true,
+    target: {
+        host: {
+            // Avoid linking to another host copy of libdrm; this library will cause
+            // binary GPU drivers to be loaded from the host, which might be linked
+            // to a system copy of libdrm, which conflicts with the AOSP one
+            allow_undefined_symbols: true,
+            header_libs: ["libdrm"],
+            shared_libs: [
+                "libepoxy",
+                "libgbm"
+            ],
+        },
+        android: {
+            shared_libs: [
+                "libdrm",
+                "liblog",
+            ],
+            static_libs: [
+                "libepoxy",
+                "libgbm",
+            ],
+        },
+    },
 }

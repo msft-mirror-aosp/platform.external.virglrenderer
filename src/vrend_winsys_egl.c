@@ -34,15 +34,14 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
-#include <epoxy/egl.h>
 #include <xf86drm.h>
 
 #include "util/u_memory.h"
 
 #include "virglrenderer.h"
-#include "virgl_egl.h"
+#include "vrend_winsys_egl.h"
 #include "virgl_hw.h"
-#include "virgl_gbm.h"
+#include "vrend_winsys_gbm.h"
 #include "virgl_util.h"
 
 #define EGL_KHR_SURFACELESS_CONTEXT            BIT(0)
@@ -53,7 +52,7 @@
 #define EGL_KHR_GL_COLORSPACE                  BIT(5)
 #define EGL_EXT_IMAGE_DMA_BUF_IMPORT           BIT(6)
 #define EGL_EXT_IMAGE_DMA_BUF_IMPORT_MODIFIERS BIT(7)
-#define EGL_KHR_FENCE_SYNC                     BIT(8)
+#define EGL_KHR_FENCE_SYNC_ANDROID             BIT(8)
 
 static const struct {
    uint32_t bit;
@@ -66,7 +65,7 @@ static const struct {
    { EGL_KHR_GL_COLORSPACE, "EGL_KHR_gl_colorspace" },
    { EGL_EXT_IMAGE_DMA_BUF_IMPORT, "EGL_EXT_image_dma_buf_import" },
    { EGL_EXT_IMAGE_DMA_BUF_IMPORT_MODIFIERS, "EGL_EXT_image_dma_buf_import_modifiers" },
-   { EGL_KHR_FENCE_SYNC, "EGL_KHR_fence_sync"}
+   { EGL_KHR_FENCE_SYNC_ANDROID, "EGL_ANDROID_native_fence_sync"}
 };
 
 struct virgl_egl {
@@ -75,7 +74,7 @@ struct virgl_egl {
    EGLConfig egl_conf;
    EGLContext egl_ctx;
    uint32_t extension_bits;
-   bool need_fence_and_wait_external;
+   EGLSyncKHR signaled_fence;
 };
 
 static bool virgl_egl_has_extension_in_string(const char *haystack, const char *needle)
@@ -218,10 +217,6 @@ struct virgl_egl *virgl_egl_init(struct virgl_gbm *gbm, bool surfaceless, bool g
    if (virgl_egl_init_extensions(egl, extensions))
       goto fail;
 
-   // ARM Mali platforms need explicit synchronization prior to mapping.
-   if (!strcmp(eglQueryString(egl->egl_display, EGL_VENDOR), "ARM"))
-      egl->need_fence_and_wait_external = true;
-
    if (gles)
       api = EGL_OPENGL_ES_API;
    else
@@ -242,6 +237,16 @@ struct virgl_egl *virgl_egl_init(struct virgl_gbm *gbm, bool surfaceless, bool g
 
    eglMakeCurrent(egl->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE,
                   egl->egl_ctx);
+
+   if (gles && virgl_egl_supports_fences(egl)) {
+      egl->signaled_fence = eglCreateSyncKHR(egl->egl_display,
+                                             EGL_SYNC_NATIVE_FENCE_ANDROID, NULL);
+      if (!egl->signaled_fence) {
+         vrend_printf("Failed to create signaled fence");
+         goto fail;
+      }
+   }
+
    return egl;
 
  fail:
@@ -251,6 +256,9 @@ struct virgl_egl *virgl_egl_init(struct virgl_gbm *gbm, bool surfaceless, bool g
 
 void virgl_egl_destroy(struct virgl_egl *egl)
 {
+   if (egl->signaled_fence) {
+      eglDestroySyncKHR(egl->egl_display, egl->signaled_fence);
+   }
    eglMakeCurrent(egl->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE,
                   EGL_NO_CONTEXT);
    eglDestroyContext(egl->egl_display, egl->egl_ctx);
@@ -513,30 +521,38 @@ void virgl_egl_image_destroy(struct virgl_egl *egl, void *image)
 }
 #endif
 
-bool virgl_egl_need_fence_and_wait_external(struct virgl_egl *egl)
+bool virgl_egl_supports_fences(struct virgl_egl *egl)
 {
-   return (egl && egl->need_fence_and_wait_external);
+   return (egl && has_bit(egl->extension_bits, EGL_KHR_FENCE_SYNC_ANDROID));
 }
 
-void *virgl_egl_fence(struct virgl_egl *egl)
+EGLSyncKHR virgl_egl_fence_create(struct virgl_egl *egl)
 {
-   const EGLint attrib_list[] = {EGL_SYNC_CONDITION_KHR,
-                                 EGL_SYNC_PRIOR_COMMANDS_COMPLETE_KHR,
-                                 EGL_NONE};
-   EGLSyncKHR fence = EGL_NO_SYNC_KHR;
-
-   if (!egl || !has_bit(egl->extension_bits, EGL_KHR_FENCE_SYNC)) {
-      return (void *)fence;
+   if (!egl || !has_bit(egl->extension_bits, EGL_KHR_FENCE_SYNC_ANDROID)) {
+      return EGL_NO_SYNC_KHR;
    }
 
-   return (void *)eglCreateSyncKHR(egl->egl_display, EGL_SYNC_FENCE_KHR, attrib_list);
+   return eglCreateSyncKHR(egl->egl_display, EGL_SYNC_NATIVE_FENCE_ANDROID, NULL);
 }
 
-void virgl_egl_wait_fence(struct virgl_egl *egl, void* sync)
-{
-   EGLSyncKHR fence = (EGLSyncKHR) sync;
-   if (fence == EGL_NO_SYNC_KHR)
-      return;
-   eglWaitSyncKHR(egl->egl_display, fence, 0);
+void virgl_egl_fence_destroy(struct virgl_egl *egl, EGLSyncKHR fence) {
    eglDestroySyncKHR(egl->egl_display, fence);
+}
+
+bool virgl_egl_client_wait_fence(struct virgl_egl *egl, EGLSyncKHR fence, uint64_t timeout)
+{
+   EGLint ret = eglClientWaitSyncKHR(egl->egl_display, fence, 0, timeout);
+   if (ret == EGL_FALSE) {
+      vrend_printf("wait sync failed\n");
+   }
+   return ret != EGL_TIMEOUT_EXPIRED_KHR;
+}
+
+bool virgl_egl_export_signaled_fence(struct virgl_egl *egl, int *out_fd) {
+   return virgl_egl_export_fence(egl, egl->signaled_fence, out_fd);
+}
+
+bool virgl_egl_export_fence(struct virgl_egl *egl, EGLSyncKHR fence, int *out_fd) {
+   *out_fd = eglDupNativeFenceFDANDROID(egl->egl_display, fence);
+   return *out_fd != EGL_NO_NATIVE_FENCE_FD_ANDROID;
 }

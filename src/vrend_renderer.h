@@ -32,7 +32,7 @@
 #include "vrend_debug.h"
 #include "vrend_tweaks.h"
 #include "vrend_iov.h"
-#include "virgl_gbm.h"
+#include "vrend_winsys_gbm.h"
 #include "virgl_hw.h"
 #include <epoxy/gl.h>
 
@@ -61,19 +61,6 @@ struct vrend_context;
 #define VREND_STORAGE_HOST_SYSTEM_MEMORY BIT(5)
 #define VREND_STORAGE_GL_IMMUTABLE       BIT(6)
 #define VREND_STORAGE_GL_MEMOBJ          BIT(7)
-
-enum {
-   CONTEXT_NONE,
-   CONTEXT_EGL,
-   CONTEXT_GLX
-};
-
-extern int use_context;
-#ifdef HAVE_EPOXY_EGL_H
-extern struct virgl_egl *egl;
-extern struct virgl_gbm *gbm;
-#endif
-
 
 struct vrend_resource {
    struct pipe_resource base;
@@ -135,7 +122,10 @@ struct vrend_if_cbs {
 #define VREND_USE_THREAD_SYNC 1
 #define VREND_USE_EXTERNAL_BLOB 2
 
-int vrend_renderer_init(struct vrend_if_cbs *cbs, uint32_t flags);
+const struct virgl_resource_pipe_callbacks *
+vrend_renderer_get_pipe_callbacks(void);
+
+int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags);
 
 void vrend_insert_format(struct vrend_format_table *entry, uint32_t bindings, uint32_t flags);
 bool vrend_check_framebuffer_mixed_color_attachements(void);
@@ -357,6 +347,8 @@ int vrend_renderer_create_fence(int client_fence_id, uint32_t ctx_id);
 
 void vrend_renderer_check_fences(void);
 
+int vrend_renderer_export_fence(uint32_t fence_id, int* out_fd);
+
 bool vrend_hw_switch_context(struct vrend_context *ctx, bool now);
 uint32_t vrend_renderer_object_insert(struct vrend_context *ctx, void *data,
                                       uint32_t handle, enum virgl_object_type type);
@@ -431,11 +423,8 @@ struct vrend_renderer_resource_info {
    uint32_t stride;
 };
 
-int vrend_renderer_resource_get_info(struct pipe_resource *pres,
-                                     struct vrend_renderer_resource_info *info);
-
-#define VREND_CAP_SET 1
-#define VREND_CAP_SET2 2
+void vrend_renderer_resource_get_info(struct pipe_resource *pres,
+                                      struct vrend_renderer_resource_info *info);
 
 void vrend_renderer_get_cap_set(uint32_t cap_set, uint32_t *max_ver,
                                 uint32_t *max_size);
@@ -471,17 +460,15 @@ void vrend_renderer_blit_gl(struct vrend_context *ctx,
                             bool skip_dest_swizzle);
 void vrend_blitter_fini(void);
 
+void vrend_renderer_prepare_reset(void);
 void vrend_renderer_reset(void);
 int vrend_renderer_get_poll_fd(void);
-void vrend_decode_reset(void);
 
 unsigned vrend_context_has_debug_flag(const struct vrend_context *ctx,
                                       enum virgl_debug_flags flag);
 
 unsigned vrend_renderer_query_multisample_caps(unsigned max_samples,
                                                struct virgl_caps_v2 *caps);
-
-int virgl_has_gl_colorspace(void);
 
 struct gl_version {
    uint32_t major;
@@ -491,7 +478,7 @@ struct gl_version {
 static const struct gl_version gl_versions[] = { {4,6}, {4,5}, {4,4}, {4,3}, {4,2}, {4,1}, {4,0},
                                                  {3,3}, {3,2}, {3,1}, {3,0} };
 
-extern struct vrend_if_cbs *vrend_clicbs;
+extern const struct vrend_if_cbs *vrend_clicbs;
 
 int vrend_renderer_export_query(struct pipe_resource *pres,
                                 struct virgl_renderer_export_query *export_query);

@@ -44,10 +44,18 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size);
 // eglInitialize leaks unless eglTeriminate is called (which only happens
 // with CLEANUP_EACH_INPUT), so suppress leak detection on everything
 // allocated by it.
+
+#if !defined(__has_feature)
+#define __has_feature(x) 0
+#endif
+
+#if __has_feature(address_sanitizer)
 const char* __lsan_default_suppressions(void);
+
 const char* __lsan_default_suppressions() {
    return "leak:eglInitialize\n";
 }
+#endif // __has_feature(address_sanitizer)
 
 #endif // !CLEANUP_EACH_INPUT
 
@@ -108,26 +116,21 @@ static bool initialized = false;
 static int initialize_environment()
 {
    if (!initialized) {
-      EGLBoolean ok;
-
       // Force SW rendering unless env variable is already set.
       setenv(SWRAST_ENV, "true", 0);
 
       cookie.display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
       assert(cookie.display != EGL_NO_DISPLAY);
 
-      ok = eglInitialize(cookie.display, NULL, NULL);
-      assert(ok);
+      assert(eglInitialize(cookie.display, NULL, NULL));
 
       const EGLint config_attribs[] = { EGL_SURFACE_TYPE, EGL_DONT_CARE,
                                         EGL_NONE };
       EGLint num_configs;
-      ok = eglChooseConfig(cookie.display, config_attribs,
-                           &cookie.egl_config, 1, &num_configs);
-      assert(ok);
+      assert(eglChooseConfig(cookie.display, config_attribs,
+                             &cookie.egl_config, 1, &num_configs));
 
-      ok = eglBindAPI(EGL_OPENGL_ES_API);
-      assert(ok);
+      assert(eglBindAPI(EGL_OPENGL_ES_API));
 
       const EGLint context_attribs[] = { EGL_CONTEXT_CLIENT_VERSION, 3,
                                          EGL_NONE };
@@ -135,9 +138,8 @@ static int initialize_environment()
                                     EGL_NO_CONTEXT, context_attribs);
       assert(cookie.ctx != EGL_NO_CONTEXT);
 
-      ok = eglMakeCurrent(cookie.display, EGL_NO_SURFACE, EGL_NO_SURFACE,
-                          cookie.ctx);
-      assert(ok);
+      assert(eglMakeCurrent(cookie.display, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                            cookie.ctx));
 
       initialized = true;
    }
@@ -164,7 +166,6 @@ static void cleanup_environment()
 int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
 {
    uint32_t ctx_id = initialize_environment();
-   int ret;
 
    // There are trade-offs here between ensuring that state is not persisted
    // between invocations of virgl_renderer_submit_cmd, and to avoid leaking
@@ -172,12 +173,10 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
    // driver with each eglInitialize()/eglTerminate() if CLEANUP_EACH_INPUT
    // is set.
 
-   ret = virgl_renderer_init(&cookie, 0, &fuzzer_cbs);
-   assert(!ret);
+   assert(!virgl_renderer_init(&cookie, 0, &fuzzer_cbs));
 
    const char *name = "fuzzctx";
-   ret = virgl_renderer_context_create(ctx_id, strlen(name), name);
-   assert(!ret);
+   assert(!virgl_renderer_context_create(ctx_id, strlen(name), name));
 
    virgl_renderer_submit_cmd((void *) data, ctx_id, size / sizeof(uint32_t));
 

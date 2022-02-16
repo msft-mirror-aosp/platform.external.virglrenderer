@@ -228,7 +228,7 @@ const char *tgsi_memory_names[3] =
    "VOLATILE",
 };
 
-static inline void UNUSED
+static inline void
 tgsi_strings_check(void)
 {
    STATIC_ASSERT(Elements(tgsi_semantic_names) == TGSI_SEMANTIC_COUNT);

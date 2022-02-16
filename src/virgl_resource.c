@@ -59,8 +59,7 @@ virgl_resource_table_init(const struct virgl_resource_pipe_callbacks *callbacks)
    if (!virgl_resource_table)
       return ENOMEM;
 
-   if (callbacks)
-      pipe_callbacks = *callbacks;
+   pipe_callbacks = *callbacks;
 
    return 0;
 }

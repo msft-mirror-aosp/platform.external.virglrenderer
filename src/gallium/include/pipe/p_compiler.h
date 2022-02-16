@@ -37,7 +37,6 @@
 #include <stddef.h>
 #include <stdarg.h>
 #include <limits.h>
-#include <sys/types.h>
 
 
 #if defined(_WIN32) && !defined(__WIN32__)

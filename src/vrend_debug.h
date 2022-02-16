@@ -26,7 +26,6 @@
 #define vrend_debug_h
 
 #include "virgl_protocol.h"
-#include "virgl_util.h"
 #include <stdarg.h>
 
 struct vrend_context;
@@ -47,8 +46,7 @@ enum virgl_debug_flags {
    dbg_tweak =  1 << 10,
    dbg_query =  1 << 11,
    dbg_gles =  1 << 12,
-   dbg_bgra = 1 << 13,
-   dbg_all = (1 << 14) - 1,
+   dbg_all = (1 << 13) - 1,
    dbg_allow_guest_override = 1 << 16,
    dbg_feature_use = 1 << 17,
    dbg_khr = 1 << 18,
@@ -71,13 +69,11 @@ unsigned vrend_debug(const struct vrend_context *ctx, enum virgl_debug_flags fla
 
 void vrend_debug_add_flag(enum virgl_debug_flags flag);
 
-static inline void vrend_printf(const char *fmt, ...)
-{
-   va_list va;
-   va_start(va, fmt);
-   virgl_logv(fmt, va);
-   va_end(va);
-}
+void vrend_printf(const char *fmt, ...);
+
+typedef void (*virgl_debug_callback_type)(const char *fmt, va_list ap);
+
+virgl_debug_callback_type vrend_set_debug_callback(virgl_debug_callback_type cb);
 
 #ifndef NDEBUG
 #define VREND_DEBUG(flag, ctx,  ...) \
@@ -101,9 +97,9 @@ static inline void vrend_printf(const char *fmt, ...)
       } while (0)
 
 #else
-#define VREND_DEBUG(flag, ctx, ...) (void)ctx
-#define VREND_DEBUG_EXT(flag, ctx, X) (void)ctx
-#define VREND_DEBUG_NOCTX(flag, ctx, ...) (void)ctx
+#define VREND_DEBUG(flag, ctx, ...)
+#define VREND_DEBUG_EXT(flag, ctx, X)
+#define VREND_DEBUG_NOCTX(flag, ctx, ...)
 #endif
 
 #endif

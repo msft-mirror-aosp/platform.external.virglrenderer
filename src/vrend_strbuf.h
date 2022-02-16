@@ -215,8 +215,7 @@ static inline void strarray_dump_with_line_numbers(struct vrend_strarray *sa)
          } else {
             len = strlen(line);
          }
-         if (len)
-            vrend_printf("%4d: %.*s\n", lineno++, len, line);
+         vrend_printf("%4d: %.*s\n", lineno++, len, line);
       } while (end);
    }
 }

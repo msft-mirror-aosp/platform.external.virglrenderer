@@ -97,9 +97,7 @@ enum tgsi_opcode_type {
    TGSI_TYPE_UNSIGNED,
    TGSI_TYPE_SIGNED,
    TGSI_TYPE_FLOAT,
-   TGSI_TYPE_DOUBLE,
-   TGSI_TYPE_UNSIGNED64,
-   TGSI_TYPE_SIGNED64
+   TGSI_TYPE_DOUBLE
 };
 
 enum tgsi_opcode_type

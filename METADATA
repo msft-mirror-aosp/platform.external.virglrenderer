@@ -15,6 +15,5 @@ third_party {
     value: "https://anongit.freedesktop.org/git/virglrenderer.git"
   }
   version: "master"
-  license_type: NOTICE
   last_upgrade_date { year: 2018 month: 4 day: 10 }
 }

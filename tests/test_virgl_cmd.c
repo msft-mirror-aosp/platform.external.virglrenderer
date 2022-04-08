@@ -41,7 +41,7 @@ START_TEST(virgl_test_overlap_obj_id)
     struct virgl_context ctx;
     int ctx_handle = 1;
     ret = testvirgl_init_ctx_cmdbuf(&ctx);
-    ck_assert_int_eq(ret, 0);
+    ck_assert_int_eq(ret, 0);    
 
     /* set blend state */
     {
@@ -67,12 +67,6 @@ START_TEST(virgl_test_overlap_obj_id)
 }
 END_TEST
 
-#ifdef PIPE_ARCH_LITTLE_ENDIAN
-static const uint32_t test_green = 0xff00ff00;
-#else
-static const uint32_t test_green = 0x00ff00ff;
-#endif
-
 /* create a resource - clear it to a color, do a transfer */
 START_TEST(virgl_test_clear)
 {
@@ -84,14 +78,14 @@ START_TEST(virgl_test_clear)
     struct virgl_box box;
     int ret;
     int i;
-
+    
     ret = testvirgl_init_ctx_cmdbuf(&ctx);
-    ck_assert_int_eq(ret, 0);
+    ck_assert_int_eq(ret, 0);    
 
     /* init and create simple 2D resource */
     ret = testvirgl_create_backed_simple_2d_res(&res, 1, 50, 50);
     ck_assert_int_eq(ret, 0);
-
+    
     /* attach resource to context */
     virgl_renderer_ctx_attach_resource(ctx.ctx_id, res.handle);
 
@@ -133,7 +127,7 @@ START_TEST(virgl_test_clear)
     /* check the returned values */
     for (i = 0; i < 5; i++) {
 	uint32_t *ptr = res.iovs[0].iov_base;
-	ck_assert_int_eq(ptr[i], test_green);
+	ck_assert_int_eq(ptr[i], 0xff00ff00);
     }
 
     /* cleanup */
@@ -143,7 +137,7 @@ START_TEST(virgl_test_clear)
 
     testvirgl_fini_ctx_cmdbuf(&ctx);
 }
-END_TEST
+END_TEST 
 
 START_TEST(virgl_test_blit_simple)
 {
@@ -222,7 +216,7 @@ START_TEST(virgl_test_blit_simple)
     /* check the returned values */
     for (i = 0; i < 5; i++) {
 	uint32_t *ptr = res2.iovs[0].iov_base;
-	ck_assert_int_eq(ptr[i], test_green);
+	ck_assert_int_eq(ptr[i], 0xff00ff00);
     }
 
     /* cleanup */
@@ -466,7 +460,7 @@ START_TEST(virgl_test_render_simple)
 	uint32_t *ptr = res.iovs[0].iov_base;
 	for (h = 0; h < th; h++) {
 	    for (w = 0; w < tw; w++) {
-		if (ptr[h * tw + w] != test_green)
+		if (ptr[h * tw + w] != 0xff00ff00)
 		    all_cleared = false;
 	    }
 	}
@@ -730,7 +724,7 @@ START_TEST(virgl_test_render_geom_simple)
 	uint32_t *ptr = res.iovs[0].iov_base;
 	for (h = 0; h < th; h++) {
 	    for (w = 0; w < tw; w++) {
-		if (ptr[h * tw + w] != test_green)
+		if (ptr[h * tw + w] != 0xff00ff00)
 		    all_cleared = false;
 	    }
 	}
@@ -747,8 +741,8 @@ START_TEST(virgl_test_render_geom_simple)
 }
 END_TEST
 
-/* create a resource - clear it to a color, render something
- * and test transform feedback
+/* create a resource - clear it to a color, render something 
+ * and test transform feedback 
  */
 START_TEST(virgl_test_render_xfb)
 {
@@ -975,7 +969,7 @@ START_TEST(virgl_test_render_xfb)
 	uint32_t *ptr = res.iovs[0].iov_base;
 	for (h = 0; h < th; h++) {
 	    for (w = 0; w < tw; w++) {
-		if (ptr[h * tw + w] != test_green)
+		if (ptr[h * tw + w] != 0xff00ff00)
 		    all_cleared = false;
 	    }
 	}
@@ -1045,11 +1039,6 @@ int main(void)
   Suite *s;
   SRunner *sr;
   int number_failed;
-
-  if (getenv("VRENDTEST_USE_EGL_SURFACELESS"))
-     context_flags |= VIRGL_RENDERER_USE_SURFACELESS;
-   if (getenv("VRENDTEST_USE_EGL_GLES"))
-      context_flags |= VIRGL_RENDERER_USE_GLES;
 
   s = virgl_init_suite();
   sr = srunner_create(s);

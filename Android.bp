@@ -148,6 +148,13 @@ cc_library {
                 "libdrm",
             ],
         },
+        linux_bionic: {
+            cflags: [
+                // Provide a C proto for memfd_create
+                "-D__USE_GNU",
+                "-DHAVE_MEMFD_CREATE=1",
+            ],
+        },
         android: {
             cflags: [
                 // Provide a C proto for memfd_create

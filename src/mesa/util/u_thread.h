@@ -47,7 +47,7 @@
 #include <OS.h>
 #endif
 
-#if DETECT_OS_LINUX && !defined(__ANDROID__)
+#if DETECT_OS_LINUX
 #include <sched.h>
 #elif defined(_WIN32) && !defined(__CYGWIN__) && _WIN32_WINNT >= 0x0600
 #include <windows.h>

@@ -1146,6 +1146,7 @@ START_TEST(virgl_test_set_viewport_state)
 
    testvirgl_fini_ctx_cmdbuf(&ctx);
 }
+END_TEST
 
 START_TEST(virgl_decode_set_scissor_state)
 {

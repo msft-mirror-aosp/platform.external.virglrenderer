@@ -1642,7 +1642,7 @@ struct virgl_context *vrend_renderer_context_create(uint32_t handle,
 {
    struct vrend_decode_ctx *dctx;
 
-   dctx = malloc(sizeof(struct vrend_decode_ctx));
+   dctx = calloc(1, sizeof(struct vrend_decode_ctx));
    if (!dctx)
       return NULL;
 

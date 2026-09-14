@@ -27,12 +27,12 @@ subdir('gallium')
 virgl_sources = [
    'virgl_context.c',
    'virgl_fence.c',
+   'virgl_iov.c',
    'virgl_resource.c',
    'virgl_util.c',
 ]
 
 vrend_sources = [
-   'vrend/iov.c',
    'vrend/vrend_blitter.c',
    'vrend/vrend_debug.c',
    'vrend/vrend_decode.c',

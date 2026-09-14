@@ -55,6 +55,7 @@
 
 #include "virgl_context.h"
 #include "virgl_fence.h"
+#include "virgl_iov.h"
 #include "virgl_resource.h"
 #include "virgl_util.h"
 
@@ -1169,7 +1170,7 @@ int virgl_renderer_resource_create_blob(const struct virgl_renderer_resource_cre
    if (args->size == 0)
       return -EINVAL;
    if (has_guest_storage) {
-      const size_t iov_size = vrend_get_iovec_size(args->iovecs, args->num_iovs);
+      const size_t iov_size = virgl_get_iovec_size(args->iovecs, args->num_iovs);
       if (iov_size < args->size)
          return -EINVAL;
    } else {

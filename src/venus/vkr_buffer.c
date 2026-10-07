@@ -57,6 +57,8 @@ vkr_dispatch_vkGetBufferMemoryRequirements(
 
    vn_replace_vkGetBufferMemoryRequirements_args_handle(args);
    vk->GetBufferMemoryRequirements(args->device, args->buffer, args->pMemoryRequirements);
+   vkr_physical_device_mem_type_spoof(dev->physical_device,
+                                      &args->pMemoryRequirements->memoryTypeBits);
 }
 
 static void
@@ -69,6 +71,9 @@ vkr_dispatch_vkGetBufferMemoryRequirements2(
 
    vn_replace_vkGetBufferMemoryRequirements2_args_handle(args);
    vk->GetBufferMemoryRequirements2(args->device, args->pInfo, args->pMemoryRequirements);
+   vkr_physical_device_mem_type_spoof(
+      dev->physical_device,
+      &args->pMemoryRequirements->memoryRequirements.memoryTypeBits);
 }
 
 static void
@@ -142,6 +147,9 @@ vkr_dispatch_vkGetDeviceBufferMemoryRequirements(
    vn_replace_vkGetDeviceBufferMemoryRequirements_args_handle(args);
    vk->GetDeviceBufferMemoryRequirements(args->device, args->pInfo,
                                          args->pMemoryRequirements);
+   vkr_physical_device_mem_type_spoof(
+      dev->physical_device,
+      &args->pMemoryRequirements->memoryRequirements.memoryTypeBits);
 }
 
 void

@@ -229,6 +229,7 @@ static const struct debug_named_value vkr_debug_options[] = {
    { "validate", VKR_DEBUG_VALIDATE, "Force enabling the validation layer" },
    { "udmabuf", VKR_DEBUG_UDMABUF, "Force udmabuf for host visible memory" },
    { "gbm", VKR_DEBUG_GBM, "Force gbm for host visible memory" },
+   { "no_mem_type_spoof", VKR_DEBUG_NO_MEM_TYPE_SPOOF, "Disable memory type spoofing" },
    DEBUG_NAMED_VALUE_END
 };
 

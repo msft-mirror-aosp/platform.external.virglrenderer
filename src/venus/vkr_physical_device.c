@@ -173,6 +173,21 @@ vkr_physical_device_init_memory_properties(struct vkr_physical_device *physical_
    VkPhysicalDevice handle = physical_dev->base.handle.physical_device;
    vk->GetPhysicalDeviceMemoryProperties(handle, &physical_dev->memory_properties);
 
+   if (!VKR_DEBUG(NO_MEM_TYPE_SPOOF)) {
+      VkPhysicalDeviceMemoryProperties *p = &physical_dev->memory_properties;
+      const VkMemoryPropertyFlags flags =
+         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+      if ((p->memoryTypes[0].propertyFlags & flags) == flags) {
+         p->memoryTypeCount = MIN2(p->memoryTypeCount, VK_MAX_MEMORY_TYPES - 1);
+         memmove(&p->memoryTypes[1], &p->memoryTypes[0],
+                 sizeof(p->memoryTypes[0]) * p->memoryTypeCount);
+         p->memoryTypeCount++;
+         p->memoryTypes[0].propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+         p->memoryTypes[1].propertyFlags &= ~VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+         physical_dev->mem_type_spoof = true;
+      }
+   }
+
    /* XXX When a VkMemoryType has VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, we
     * assume any VkDeviceMemory with the memory type can be made external and
     * be exportable.  That is incorrect but is what we have to live with with
@@ -716,16 +731,16 @@ vkr_dispatch_vkGetPhysicalDeviceMemoryProperties2(
       vkr_physical_device_from_handle(args->physicalDevice);
    struct vn_physical_device_proc_table *vk = &physical_dev->proc_table;
 
-   if (args->pMemoryProperties->pNext == NULL) {
-      /* The client is querying only VkPhysicalDeviceMemoryProperties, which is
-       * invariant. Return the cached properties.
-       */
-      args->pMemoryProperties->memoryProperties = physical_dev->memory_properties;
-   } else {
+   if (args->pMemoryProperties->pNext != NULL) {
       vn_replace_vkGetPhysicalDeviceMemoryProperties2_args_handle(args);
       vk->GetPhysicalDeviceMemoryProperties2(args->physicalDevice,
                                              args->pMemoryProperties);
    }
+
+   /* VkPhysicalDeviceMemoryProperties is invariant. Always return the cached
+    * (and potentially modified) properties.
+    */
+   args->pMemoryProperties->memoryProperties = physical_dev->memory_properties;
 }
 
 static void

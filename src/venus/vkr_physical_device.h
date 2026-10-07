@@ -32,6 +32,7 @@ struct vkr_physical_device {
    bool EXT_metal_objects;
 
    VkPhysicalDeviceMemoryProperties memory_properties;
+   bool mem_type_spoof;
    VkPhysicalDeviceIDProperties id_properties;
    bool is_dma_buf_fd_export_supported;
    bool is_opaque_fd_export_supported;
@@ -51,5 +52,13 @@ vkr_context_init_physical_device_dispatch(struct vkr_context *ctx);
 void
 vkr_physical_device_destroy(struct vkr_context *ctx,
                             struct vkr_physical_device *physical_dev);
+
+static inline void
+vkr_physical_device_mem_type_spoof(const struct vkr_physical_device *physical_dev,
+                                   uint32_t *mem_type_bits)
+{
+   if (physical_dev->mem_type_spoof)
+      *mem_type_bits = (*mem_type_bits << 1) | 1u;
+}
 
 #endif /* VKR_PHYSICAL_DEVICE_H */

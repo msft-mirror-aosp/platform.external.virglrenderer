@@ -294,6 +294,9 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
     */
    const uint32_t property_flags =
       physical_dev->memory_properties.memoryTypes[mem_type_index].propertyFlags;
+   if (physical_dev->mem_type_spoof && mem_type_index > 0)
+      alloc_info->memoryTypeIndex = mem_type_index - 1;
+
    uint32_t valid_fd_types = 0;
    int udmabuf_fd = -1;
    void *gbm_bo = NULL;
@@ -421,7 +424,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
    mem->gbm_bo = gbm_bo;
    mem->mtl_shm = mtl_shm;
    mem->allocation_size = alloc_info->allocationSize;
-   mem->memory_type_index = mem_type_index;
+   mem->memory_type_index = alloc_info->memoryTypeIndex;
 }
 
 static void
@@ -496,6 +499,7 @@ vkr_dispatch_vkGetMemoryResourcePropertiesMESA(
    if (args->ret != VK_SUCCESS)
       return;
 
+   vkr_physical_device_mem_type_spoof(dev->physical_device, &mem_fd_props.memoryTypeBits);
    args->pMemoryResourceProperties->memoryTypeBits = mem_fd_props.memoryTypeBits;
 
    VkMemoryResourceAllocationSizePropertiesMESA *alloc_size_props =

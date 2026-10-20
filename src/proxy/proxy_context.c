@@ -201,7 +201,6 @@ proxy_context_submit_fence(struct virgl_context *base,
                            uint64_t fence_id)
 {
    struct proxy_context *ctx = (struct proxy_context *)base;
-   const uint64_t old_busy_mask = ctx->timeline_busy_mask;
 
    if (ring_idx >= PROXY_CONTEXT_TIMELINE_COUNT)
       return -EINVAL;
@@ -219,6 +218,7 @@ proxy_context_submit_fence(struct virgl_context *base,
       mtx_lock(&ctx->timeline_mutex);
 
    list_addtail(&fence->head, &timeline->fences);
+   const uint64_t old_busy_mask = ctx->timeline_busy_mask;
    ctx->timeline_busy_mask |= 1ull << ring_idx;
 
    if (proxy_renderer.flags & VIRGL_RENDERER_ASYNC_FENCE_CB)

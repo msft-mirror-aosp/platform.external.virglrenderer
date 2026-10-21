@@ -247,7 +247,8 @@ render_socket_receive_request_internal(struct render_socket *socket,
       const int *received_fds = get_received_fds(&msg, &received_fd_count);
       assert(received_fd_count <= max_fd_count);
 
-      memcpy(fds, received_fds, sizeof(*fds) * received_fd_count);
+      if (received_fd_count)
+         memcpy(fds, received_fds, sizeof(*fds) * received_fd_count);
       *out_fd_count = received_fd_count;
    } else if (out_fd_count) {
       *out_fd_count = 0;

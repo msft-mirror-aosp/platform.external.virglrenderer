@@ -271,6 +271,7 @@ vkr_context_import_resource_from_shm(struct vkr_context *ctx,
       return false;
    }
 
+   close(fd);
    return true;
 }
 
